@@ -117,7 +117,27 @@ assert.ok(result.analysis.attentionScore.score > 0);
 
 const report = await request(`/api/v1/analyses/${analysis.id}/report`);
 assert.equal(report.projectSummary.id, project.id);
-assert.ok(Object.values(report.findingsBySeverity).flat().length > 0);
+const reportFindings = Object.values(report.findingsBySeverity).flat();
+assert.ok(reportFindings.length > 0);
+
+const reviewedFinding = await request(`/api/v1/findings/${reportFindings[0].id}/status`, {
+  method: "PATCH",
+  body: JSON.stringify({ status: "under_review" }),
+});
+assert.equal(reviewedFinding.status, "under_review");
+
+const updatedProject = await request(`/api/v1/projects/${project.id}`, {
+  method: "PATCH",
+  body: JSON.stringify({ name: "Updated Live Authority Review" }),
+});
+assert.equal(updatedProject.name, "Updated Live Authority Review");
+
+const auditEvents = await request(`/api/v1/projects/${project.id}/audit-events?pageSize=100`);
+assert.ok(auditEvents.some((event) => event.action === "finding.status_change"));
+
+await request(`/api/v1/documents/${document.id}`, { method: "DELETE" });
+const remainingDocuments = await request(`/api/v1/projects/${project.id}/documents?pageSize=100`);
+assert.equal(remainingDocuments.length, 0);
 
 console.log(
   JSON.stringify(
@@ -128,6 +148,9 @@ console.log(
       analysisState: result.analysis.state,
       findings: result.findings.length,
       attentionScore: result.analysis.attentionScore.score,
+      findingStatusTracking: reviewedFinding.status,
+      auditEvents: auditEvents.length,
+      documentRemoval: "passed",
     },
     null,
     2,

@@ -10,6 +10,7 @@ const state = {
   agents: [],
   documents: [],
   analyses: [],
+  auditEvents: [],
   report: null,
   view: "overview",
   authMode: "register",
@@ -21,6 +22,7 @@ const icon = (name) => {
     agent: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0M19 4v4M17 6h4"/>',
     evidence: '<path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h6"/>',
     analysis: '<path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/>',
+    activity: '<path d="M4 12h3l2-6 4 12 2-6h5M5 3v18h16"/>',
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 };
@@ -155,6 +157,7 @@ function shell(content) {
     ["agent", "Agent profile", "agent"],
     ["evidence", "Evidence", "evidence"],
     ["analysis", "Analysis", "analysis"],
+    ["activity", "Activity", "activity"],
   ];
   app.innerHTML = `<div class="workspace">
     <aside class="sidebar">
@@ -197,6 +200,10 @@ async function navigate(view) {
     await loadAnalysisData();
     return renderAnalysis();
   }
+  if (view === "activity") {
+    await loadAuditEvents();
+    return renderActivity();
+  }
 }
 
 function logout(showToast = true) {
@@ -209,6 +216,7 @@ function logout(showToast = true) {
     agents: [],
     documents: [],
     analyses: [],
+    auditEvents: [],
     report: null,
     view: "overview",
   });
@@ -233,10 +241,11 @@ async function initialize() {
 
 async function loadProjectResources() {
   if (!state.project) return;
-  [state.agents, state.documents, state.analyses] = await Promise.all([
+  [state.agents, state.documents, state.analyses, state.auditEvents] = await Promise.all([
     api(`/projects/${state.project.id}/agents`),
     api(`/projects/${state.project.id}/documents?pageSize=100`),
     api(`/projects/${state.project.id}/analyses?pageSize=100`),
+    api(`/projects/${state.project.id}/audit-events?pageSize=100`),
   ]);
 }
 
@@ -250,7 +259,7 @@ function renderOverview() {
   ).length;
   const latestScore = state.analyses.find((analysis) => analysis.attentionScore)?.attentionScore
     ?.score;
-  shell(`${pageHeader("Review portfolio", "Authority workspace", "Create a review, describe the agent, add governing documents, and generate evidence-linked attention findings.", '<button class="button button-primary" data-new-project>+ New review</button>')}
+  shell(`${pageHeader("Review portfolio", "Authority workspace", "Create a review, describe the agent, add governing documents, and generate evidence-linked attention findings.", `${state.project ? '<button class="button button-secondary" data-project-settings>Review settings</button>' : ""}<button class="button button-primary" data-new-project>+ New review</button>`)}
     <div class="grid grid-3">
       <div class="card card-pad metric"><div class="metric-label">Active reviews</div><div class="metric-value">${state.projects.length}</div><div class="metric-detail">Across ${escapeHtml(state.me.organization.name)}</div></div>
       <div class="card card-pad metric"><div class="metric-label">Evidence documents</div><div class="metric-value">${state.documents.length}</div><div class="metric-detail">Contract and insurance sources</div></div>
@@ -263,6 +272,9 @@ function renderOverview() {
   document
     .querySelectorAll("[data-new-project]")
     .forEach((button) => button.addEventListener("click", openProjectModal));
+  document
+    .querySelector("[data-project-settings]")
+    ?.addEventListener("click", openProjectSettingsModal);
   document.querySelectorAll("[data-project-id]").forEach((button) =>
     button.addEventListener("click", async () => {
       state.project = state.projects.find((project) => project.id === button.dataset.projectId);
@@ -272,6 +284,57 @@ function renderOverview() {
       navigate(state.view);
     }),
   );
+}
+
+function openProjectSettingsModal() {
+  const project = state.project;
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+    <div class="modal-head"><div><span class="eyebrow">Review settings</span><h2 id="settings-modal-title">Update the scope</h2></div><button class="icon-button" data-close-modal aria-label="Close dialog">×</button></div>
+    <form id="settings-form" class="field-grid">
+      <div class="field full"><label for="settings-name">Review name</label><input id="settings-name" name="name" required minlength="2" value="${escapeHtml(project.name)}" /></div>
+      <div class="field full"><label for="settings-description">Purpose</label><textarea id="settings-description" name="description">${escapeHtml(project.description || "")}</textarea></div>
+      <div class="field"><label for="settings-country">Primary country</label><input id="settings-country" name="primaryCountryCode" maxlength="2" required value="${escapeHtml(project.primaryCountryCode)}" /></div>
+      <div class="field"><label for="settings-subdivision">State / subdivision</label><input id="settings-subdivision" name="primarySubdivisionCode" value="${escapeHtml(project.primarySubdivisionCode || "")}" /></div>
+      <div class="field full"><label for="settings-affected">Other affected countries</label><input id="settings-affected" name="affectedCountryCodes" value="${escapeHtml(project.affectedCountryCodes.join(", "))}" /></div>
+      <div class="field full"><p id="settings-message" class="form-message"></p><div class="form-actions"><button type="button" class="button button-secondary" data-close-modal>Cancel</button><button type="submit" class="button button-primary">Save changes</button></div></div>
+    </form></div>`;
+  document.body.append(backdrop);
+  backdrop
+    .querySelectorAll("[data-close-modal]")
+    .forEach((button) => button.addEventListener("click", () => backdrop.remove()));
+  backdrop.querySelector("#settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = formDataObject(form);
+    const submit = form.querySelector("button[type=submit]");
+    submit.disabled = true;
+    try {
+      state.project = await api(`/projects/${project.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: values.name,
+          description: values.description || null,
+          primaryCountryCode: values.primaryCountryCode.toUpperCase(),
+          primarySubdivisionCode: values.primarySubdivisionCode || null,
+          affectedCountryCodes: commaList(values.affectedCountryCodes).map((value) =>
+            value.toUpperCase(),
+          ),
+        }),
+      });
+      state.projects = state.projects.map((item) =>
+        item.id === state.project.id ? state.project : item,
+      );
+      backdrop.remove();
+      toast("Review settings updated.");
+      renderOverview();
+    } catch (error) {
+      form.querySelector("#settings-message").textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  });
 }
 
 function openProjectModal() {
@@ -502,6 +565,22 @@ function renderEvidence() {
   document
     .querySelectorAll("[data-go-analysis]")
     .forEach((button) => button.addEventListener("click", () => navigate("analysis")));
+  document.querySelectorAll("[data-delete-document]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const documentName = button.dataset.documentName;
+      if (!window.confirm(`Remove ${documentName} from this review?`)) return;
+      button.disabled = true;
+      try {
+        await api(`/documents/${button.dataset.deleteDocument}`, { method: "DELETE" });
+        await loadDocuments();
+        toast("Document removed.");
+        renderEvidence();
+      } catch (error) {
+        toast(error.message, "error");
+        button.disabled = false;
+      }
+    }),
+  );
 }
 
 function documentRow(document) {
@@ -513,7 +592,7 @@ function documentRow(document) {
         ? "badge-orange"
         : "badge-red";
   const extension = document.originalFilename.split(".").pop().slice(0, 3).toUpperCase();
-  return `<div class="document-row"><span class="file-icon">${escapeHtml(extension)}</span><span><strong>${escapeHtml(document.originalFilename)}</strong><span>${pretty(document.documentType)} · ${(document.size / 1024).toFixed(1)} KB</span></span><span class="badge ${badgeClass}">${pretty(document.extractionStatus)}</span></div>`;
+  return `<div class="document-row"><span class="file-icon">${escapeHtml(extension)}</span><span><strong>${escapeHtml(document.originalFilename)}</strong><span>${pretty(document.documentType)} · ${(document.size / 1024).toFixed(1)} KB</span></span><span class="row-actions"><span class="badge ${badgeClass}">${pretty(document.extractionStatus)}</span><button class="icon-button danger-button" data-delete-document="${document.id}" data-document-name="${escapeHtml(document.originalFilename)}" aria-label="Remove ${escapeHtml(document.originalFilename)}">×</button></span></div>`;
 }
 
 async function submitUpload(event) {
@@ -563,7 +642,7 @@ function renderAnalysis() {
     );
     return;
   }
-  shell(`${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-rerun>Rerun analysis</button>' : "")}
+  shell(`${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-print-report>Print report</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step done"></i><i class="progress-step done"></i></div>
     ${
       report
@@ -573,12 +652,32 @@ function renderAnalysis() {
     }`);
   document.querySelector("[data-run-analysis]")?.addEventListener("click", runAnalysis);
   document.querySelector("[data-rerun]")?.addEventListener("click", runAnalysis);
+  document.querySelector("[data-print-report]")?.addEventListener("click", () => window.print());
+  document.querySelector("[data-download-report]")?.addEventListener("click", downloadReport);
+  document.querySelectorAll("[data-finding-status]").forEach((select) =>
+    select.addEventListener("change", async () => {
+      select.disabled = true;
+      try {
+        await api(`/findings/${select.dataset.findingStatus}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: select.value }),
+        });
+        const latest = state.analyses[0];
+        state.report = await api(`/analyses/${latest.id}/report`);
+        toast("Finding status updated.");
+        renderAnalysis();
+      } catch (error) {
+        toast(error.message, "error");
+        select.disabled = false;
+      }
+    }),
+  );
 }
 
 function reportView(report) {
   const findings = Object.values(report.findingsBySeverity || {}).flat();
   return `<div class="card card-pad"><div class="score-layout"><div class="score-ring" style="--score:${report.overallAttentionScore || 0}"><div class="score-center"><strong>${report.overallAttentionScore ?? "—"}</strong><span>ATTENTION / 100</span></div></div><div><span class="badge ${report.overallAttentionScore >= 70 ? "badge-red" : report.overallAttentionScore >= 40 ? "badge-orange" : "badge-green"}">${pretty(report.attentionLabel || "not scored")}</span><h2 style="font-family:Georgia,serif;font-size:1.8rem;font-weight:500;margin:12px 0 7px">${findings.length} review item${findings.length === 1 ? "" : "s"} identified</h2><p class="muted" style="line-height:1.6">${escapeHtml(report.executiveSummary)}</p></div></div></div>
-    <div class="report-grid"><div class="card"><div class="section-head"><div><h2>Priority findings</h2><p>Ordered by severity for efficient expert review.</p></div></div><div class="finding-list">${findings.length ? findings.map((finding) => `<article class="finding"><div class="finding-top"><h3>${escapeHtml(finding.title)}</h3><span class="badge severity-${finding.severity}">${pretty(finding.severity)}</span></div><p>${escapeHtml(finding.analysisExplanation)}</p><p><strong style="color:var(--ink)">Question:</strong> ${escapeHtml(finding.recommendedReviewQuestions?.[0] || "Professional review is recommended.")}</p></article>`).join("") : '<p class="muted">No findings were generated.</p>'}</div></div>
+    <div class="report-grid"><div class="card"><div class="section-head"><div><h2>Priority findings</h2><p>Ordered by severity for efficient expert review.</p></div></div><div class="finding-list">${findings.length ? findings.map(findingCard).join("") : '<p class="muted">No findings were generated.</p>'}</div></div>
       <aside><div class="card"><h2>Review context</h2><p><strong>${escapeHtml(report.agentSummary.name)}</strong><br/>${escapeHtml(report.agentSummary.businessPurpose)}</p><p>${report.analyzedDocuments.length} analyzed document${report.analyzedDocuments.length === 1 ? "" : "s"}<br/>Support: ${pretty(report.jurisdictionSupportLevel)}</p></div><div class="card" style="margin-top:18px"><h2>Questions for counsel</h2>${
         report.questionsForLegalCounsel.length
           ? `<ul>${report.questionsForLegalCounsel
@@ -593,8 +692,30 @@ function reportView(report) {
               .map((question) => `<li>${escapeHtml(question)}</li>`)
               .join("")}</ul>`
           : "<p>No insurance-specific questions generated.</p>"
-      }</div></aside></div>
+      }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div></aside></div>
     <div class="disclaimer">${escapeHtml(report.disclaimer)}</div>`;
+}
+
+function findingCard(finding) {
+  const statuses = [
+    "open",
+    "under_review",
+    "accepted",
+    "mitigated",
+    "false_positive",
+    "not_applicable",
+  ];
+  return `<article class="finding"><div class="finding-top"><div><div class="finding-tags"><span class="badge severity-${finding.severity}">${pretty(finding.severity)}</span><span class="badge badge-gray">${pretty(finding.category)}</span></div><h3>${escapeHtml(finding.title)}</h3></div><label class="status-control"><span>Status</span><select data-finding-status="${finding.id}" aria-label="Status for ${escapeHtml(finding.title)}">${statuses.map((status) => `<option value="${status}" ${finding.status === status ? "selected" : ""}>${pretty(status)}</option>`).join("")}</select></label></div><p>${escapeHtml(finding.analysisExplanation)}</p><p><strong style="color:var(--ink)">Question:</strong> ${escapeHtml(finding.recommendedReviewQuestions?.[0] || "Professional review is recommended.")}</p><details class="finding-details"><summary>View factual basis and evidence</summary><div class="fact-grid"><div><span>Document fact</span><p>${escapeHtml(finding.documentFact)}</p></div><div><span>Agent fact</span><p>${escapeHtml(finding.agentProfileFact)}</p></div><div><span>System inference</span><p>${escapeHtml(finding.systemInference)}</p></div><div><span>Review rule</span><p>${escapeHtml(finding.reviewRule)}</p></div></div>${finding.evidence?.length ? `<div class="evidence-quote"><span>Evidence excerpt</span><blockquote>${escapeHtml(finding.evidence[0].excerpt)}</blockquote></div>` : ""}<p><strong style="color:var(--ink)">Uncertainty:</strong> ${escapeHtml(finding.uncertainty)}</p></details></article>`;
+}
+
+function downloadReport() {
+  const blob = new Blob([JSON.stringify(state.report, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${state.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-authority-report.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  toast("Report export prepared.");
 }
 
 async function runAnalysis() {
@@ -624,6 +745,21 @@ async function runAnalysis() {
     button.disabled = false;
     button.textContent = "Try analysis again";
   }
+}
+
+async function loadAuditEvents() {
+  state.auditEvents = await api(`/projects/${state.project.id}/audit-events?pageSize=100`);
+}
+
+function renderActivity() {
+  shell(`${pageHeader("Traceability", "Review activity", "A chronological record of material actions, analysis runs, extraction events, and reviewer decisions.")}
+    <div class="card card-pad"><div class="section-head"><div><h2>Audit trail</h2><p>${state.auditEvents.length} recorded event${state.auditEvents.length === 1 ? "" : "s"} for this review.</p></div><button class="button button-secondary" data-refresh-activity>Refresh</button></div>
+      ${state.auditEvents.length ? `<div class="timeline">${state.auditEvents.map((event) => `<div class="timeline-event"><i></i><div><strong>${pretty(event.action.replaceAll(".", " "))}</strong><span>${new Date(event.createdAt).toLocaleString()} · ${escapeHtml(event.resourceType)}</span><code>${escapeHtml(event.requestId)}</code></div></div>`).join("")}</div>` : `<div class="empty-state"><div class="empty-icon">↻</div><h3>No activity recorded yet</h3><p>Material review actions will appear here as you build and analyze the project.</p></div>`}
+    </div>`);
+  document.querySelector("[data-refresh-activity]").addEventListener("click", async () => {
+    await loadAuditEvents();
+    renderActivity();
+  });
 }
 
 if (state.token) initialize();

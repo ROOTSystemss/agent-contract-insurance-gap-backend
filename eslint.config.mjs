@@ -19,6 +19,7 @@ export default tseslint.config(
         setTimeout: "readonly",
         URL: "readonly",
         URLSearchParams: "readonly",
+        window: "readonly",
       },
     },
   },
