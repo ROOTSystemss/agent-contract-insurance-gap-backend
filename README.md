@@ -61,7 +61,9 @@ Set a long random `JWT_SECRET` and keep `PERSISTENCE_DRIVER=memory`, then:
 npm run dev
 ```
 
-Memory mode is for evaluation and tests; data is lost when the process stops.
+Open `http://127.0.0.1:4400/` for the Authority Atlas product interface. The frontend is served by the same Fastify process, so it has no separate runtime or framework dependency. API documentation remains available at `http://127.0.0.1:4400/docs`.
+
+The interface supports registration and login, project creation, agent authority profiling, PDF/DOCX/TXT upload, deterministic analysis, and review-ready findings. Memory mode is for evaluation and tests; data is lost when the process stops.
 
 ## PostgreSQL setup
 
@@ -98,12 +100,13 @@ npm run typecheck
 npm run lint
 npm run format:check
 npm test
+npm run test:live
 npm run test:coverage
 npm run prisma:validate
 npm run demo
 ```
 
-`npm run demo` uses memory persistence and prints report-ready JSON. It requires no credentials or external service.
+`npm run demo` uses memory persistence and prints report-ready JSON. It requires no credentials or external service. With a server already running, `npm run test:live` exercises the complete HTTP workflow from registration through report generation.
 
 ## Environment variables
 

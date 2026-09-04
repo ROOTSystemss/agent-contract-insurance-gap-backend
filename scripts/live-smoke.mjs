@@ -1,0 +1,135 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const baseUrl = process.env.SMOKE_BASE_URL ?? "http://127.0.0.1:4400";
+let token = "";
+
+async function request(path, options = {}) {
+  const headers = new Headers(options.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (options.body && !(options.body instanceof FormData))
+    headers.set("Content-Type", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, { ...options, headers });
+  const payload = response.status === 204 ? null : await response.json();
+  assert.ok(response.ok, `${options.method ?? "GET"} ${path} failed: ${JSON.stringify(payload)}`);
+  return payload?.data;
+}
+
+const product = await fetch(`${baseUrl}/`);
+assert.equal(product.status, 200);
+assert.match(await product.text(), /Authority Atlas/);
+
+const suffix = Date.now();
+const registration = await request("/api/v1/auth/register", {
+  method: "POST",
+  body: JSON.stringify({
+    email: `live-smoke-${suffix}@example.test`,
+    password: "Correct Horse Battery 123!",
+    name: "Live Test Reviewer",
+    organizationName: "Root Systems Test Workspace",
+  }),
+});
+token = registration.accessToken;
+
+const project = await request("/api/v1/projects/", {
+  method: "POST",
+  body: JSON.stringify({
+    name: "Live Authority Review",
+    description: "End-to-end verification of the local product workflow.",
+    primaryCountryCode: "US",
+    primarySubdivisionCode: "US-IL",
+    affectedCountryCodes: ["CA"],
+  }),
+});
+
+const agent = await request(`/api/v1/projects/${project.id}/agents`, {
+  method: "POST",
+  body: JSON.stringify({
+    name: "Procurement Agent",
+    deploymentStatus: "pilot",
+    businessPurpose: "Prepare and execute approved vendor purchases.",
+    operatorOrganization: "Root Systems Test Workspace",
+    deploymentCountries: ["US"],
+    affectedCountries: ["CA"],
+    primaryJurisdiction: "US",
+    jurisdictionSubdivisions: ["US-IL"],
+    agentType: "Transaction agent",
+    autonomyLevel: 4,
+    humanOversightLevel: "threshold_approval",
+    canCommunicateExternally: true,
+    canMakeRepresentations: true,
+    canAcceptTerms: true,
+    canExecuteTransactions: true,
+    canSpendMoney: true,
+    perTransactionLimit: 5000,
+    aggregateSpendingLimit: 25000,
+    currency: "USD",
+    canIssueRefundsOrCredits: false,
+    canChangePrices: false,
+    canEnterContracts: true,
+    canApproveOrRejectPeople: false,
+    canApproveOrRejectVendors: true,
+    canAccessPersonalData: true,
+    canAccessSensitivePersonalData: false,
+    canAccessConfidentialBusinessData: true,
+    canAccessRegulatedData: false,
+    canModifyOrDeleteData: false,
+    canCreateIntellectualProperty: false,
+    canPublishContent: false,
+    canDeployCode: false,
+    canControlInfrastructure: false,
+    canHireOrTerminateWorkers: false,
+    canDelegateToSubAgents: false,
+    thirdPartyToolsUsed: ["Procurement portal"],
+    systemsAccessed: ["Vendor database"],
+    reversibility: "partially_reversible",
+    loggingLevel: "detailed",
+    approvalThresholds: ["Human approval above USD 1,000"],
+    emergencyStopMechanism: "Operator kill switch",
+    incidentResponseOwner: "Security Operations",
+    knownLimitations: ["Cannot independently verify vendor identity"],
+  }),
+});
+
+const contract = await readFile(
+  new URL("../demo/fixtures/contract-human-approval.txt", import.meta.url),
+);
+const uploadBody = new FormData();
+uploadBody.append(
+  "file",
+  new Blob([contract], { type: "text/plain" }),
+  "contract-human-approval.txt",
+);
+const document = await request(
+  `/api/v1/projects/${project.id}/documents?documentType=commercial_contract&countryCode=US&subdivisionCode=US-IL`,
+  { method: "POST", body: uploadBody },
+);
+assert.equal(document.extractionStatus, "completed");
+
+const analysis = await request(`/api/v1/projects/${project.id}/analyses`, {
+  method: "POST",
+  body: JSON.stringify({ agentProfileId: agent.id, documentIds: [document.id] }),
+});
+const result = await request(`/api/v1/analyses/${analysis.id}/run`, { method: "POST" });
+assert.match(result.analysis.state, /^completed/);
+assert.ok(result.findings.length > 0);
+assert.ok(result.analysis.attentionScore.score > 0);
+
+const report = await request(`/api/v1/analyses/${analysis.id}/report`);
+assert.equal(report.projectSummary.id, project.id);
+assert.ok(Object.values(report.findingsBySeverity).flat().length > 0);
+
+console.log(
+  JSON.stringify(
+    {
+      status: "passed",
+      projectId: project.id,
+      documentStatus: document.extractionStatus,
+      analysisState: result.analysis.state,
+      findings: result.findings.length,
+      attentionScore: result.analysis.attentionScore.score,
+    },
+    null,
+    2,
+  ),
+);

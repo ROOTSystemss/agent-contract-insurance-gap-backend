@@ -84,7 +84,13 @@ describe("API integration", () => {
     return parse<SuccessBody<Project>>(response.body).data;
   }
 
-  it("serves health, readiness, metadata, OpenAPI, and Swagger", async () => {
+  it("serves the product UI, health, readiness, metadata, OpenAPI, and Swagger", async () => {
+    const productUi = await app.inject({ method: "GET", url: "/" });
+    expect(productUi.statusCode).toBe(200);
+    expect(productUi.headers["content-type"]).toContain("text/html");
+    expect(productUi.body).toContain("Authority Atlas");
+    expect((await app.inject({ method: "GET", url: "/styles.css" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/app.js" })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: "/ready" })).statusCode).toBe(200);
     const meta = await app.inject({ method: "GET", url: "/api/v1/meta" });

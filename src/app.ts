@@ -18,6 +18,7 @@ import { findingRoutes } from "./api/finding-routes.js";
 import { jurisdictionRoutes } from "./api/jurisdiction-routes.js";
 import { organizationRoutes } from "./api/organization-routes.js";
 import { projectRoutes } from "./api/project-routes.js";
+import { uiRoutes } from "./api/ui-routes.js";
 import { loadConfig, type AppConfig } from "./config/env.js";
 import { DocumentService } from "./documents/document-service.js";
 import { LocalDocumentStorage, type DocumentStorage } from "./documents/storage.js";
@@ -169,6 +170,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     requestId: request.id,
   }));
   app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
+
+  await app.register(uiRoutes);
 
   app.setNotFoundHandler((request, reply) => {
     void reply.code(404).send({

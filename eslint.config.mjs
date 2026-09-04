@@ -3,12 +3,34 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   { ignores: ["dist/**", "coverage/**", "node_modules/**", "uploads/**", "generated-reports/**"] },
-  js.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
   {
+    ...js.configs.recommended,
+    files: ["**/*.js", "**/*.mjs"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        fetch: "readonly",
+        FormData: "readonly",
+        Headers: "readonly",
+        Blob: "readonly",
+        console: "readonly",
+        process: "readonly",
+        sessionStorage: "readonly",
+        setTimeout: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+      },
+    },
+  },
+  ...tseslint.configs.recommendedTypeChecked.map((configuration) => ({
+    ...configuration,
+    files: ["**/*.ts"],
+  })),
+  {
+    files: ["**/*.ts"],
     languageOptions: {
       parserOptions: {
-        projectService: { allowDefaultProject: ["eslint.config.mjs"] },
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },
