@@ -3,6 +3,7 @@ import type {
   AttentionScore,
   ClauseDetection,
   DocumentRecord,
+  Finding,
   ScoreContribution,
 } from "../domain/types.js";
 
@@ -25,6 +26,7 @@ export function calculateAttentionScore(input: {
   documents: DocumentRecord[];
   detections: ClauseDetection[];
   jurisdictionUniversalOnly: boolean;
+  findings?: Array<Pick<Finding, "severity">>;
 }): AttentionScore {
   const { agent, documents, detections } = input;
   const contributions: ScoreContribution[] = [];
@@ -187,10 +189,29 @@ export function calculateAttentionScore(input: {
     ),
   );
 
-  const score = Math.min(
+  const rawScore = Math.min(
     100,
     contributions.reduce((sum, item) => sum + item.points, 0),
   );
+  const severities = new Set(input.findings?.map((finding) => finding.severity) ?? []);
+  const severityFloor = severities.has("critical")
+    ? 76
+    : severities.has("high")
+      ? 51
+      : severities.has("moderate")
+        ? 26
+        : 0;
+  const score = Math.max(rawScore, severityFloor);
+  if (score > rawScore) {
+    contributions.push(
+      contribution(
+        "finding_severity_guardrail",
+        score - rawScore,
+        76,
+        `The score was raised from ${rawScore} to ${score} so the overall attention level does not understate the most severe finding.`,
+      ),
+    );
+  }
   const label: AttentionScore["label"] =
     score >= 76
       ? "critical_review"

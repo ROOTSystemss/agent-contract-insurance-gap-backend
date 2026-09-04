@@ -80,6 +80,30 @@ describe("deterministic analysis", () => {
     expect(calculateAttentionScore(input)).toEqual(calculateAttentionScore(input));
   });
 
+  it("does not let the overall attention score understate finding severity", () => {
+    const base = {
+      agent: agent({ autonomyLevel: 0 }),
+      documents: [document("Professional Services")],
+      detections: [],
+      jurisdictionUniversalOnly: false,
+    };
+    const high = calculateAttentionScore({
+      ...base,
+      findings: [{ severity: "high" }],
+    });
+    const critical = calculateAttentionScore({
+      ...base,
+      findings: [{ severity: "critical" }],
+    });
+    expect(high.score).toBeGreaterThanOrEqual(51);
+    expect(high.label).toBe("high_attention");
+    expect(critical.score).toBeGreaterThanOrEqual(76);
+    expect(critical.label).toBe("critical_review");
+    expect(
+      high.contributions.find((item) => item.dimension === "finding_severity_guardrail"),
+    ).toBeTruthy();
+  });
+
   it("raises autonomy attention and lowers oversight attention with stronger approval", () => {
     const base = { documents: [], detections: [], jurisdictionUniversalOnly: true };
     const low = calculateAttentionScore({ ...base, agent: agent({ autonomyLevel: 1 }) });

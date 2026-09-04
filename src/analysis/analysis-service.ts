@@ -88,6 +88,7 @@ export class AnalysisService {
         documents,
         detections: [...detections.values()].flat(),
         jurisdictionUniversalOnly: packSelection.status === "universal_only",
+        findings,
       });
       const extractionWarnings = documents.flatMap((document) => document.extractionWarnings);
       const warnings = [...packSelection.warnings, ...extractionWarnings];
