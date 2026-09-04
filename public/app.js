@@ -247,6 +247,7 @@ async function loadProjectResources() {
     api(`/projects/${state.project.id}/analyses?pageSize=100`),
     api(`/projects/${state.project.id}/audit-events?pageSize=100`),
   ]);
+  state.analyses.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function pageHeader(eyebrow, title, description, actions = "") {
@@ -559,7 +560,12 @@ function renderEvidence() {
     </div>`);
   const input = document.querySelector("#document-file");
   input.addEventListener("change", () => {
-    document.querySelector("#file-label").textContent = input.files[0]?.name || "Choose a document";
+    const filename = input.files[0]?.name || "";
+    document.querySelector("#file-label").textContent = filename || "Choose a document";
+    if (/insurance|policy|endorsement|coverage/i.test(filename)) {
+      document.querySelector("#document-type").value = "insurance_policy";
+      toast("Document type set to Insurance Policy based on the filename.");
+    }
   });
   document.querySelector("#upload-form").addEventListener("submit", submitUpload);
   document
@@ -627,9 +633,21 @@ async function loadAnalysisData() {
     api(`/projects/${state.project.id}/documents?pageSize=100`),
     api(`/projects/${state.project.id}/analyses?pageSize=100`),
   ]);
+  state.analyses.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const latest = state.analyses[0];
-  if (latest?.state.startsWith("completed"))
+  if (latest?.state.startsWith("completed") && analysisMatchesCurrentEvidence(latest))
     state.report = await api(`/analyses/${latest.id}/report`);
+  else state.report = null;
+}
+
+function analysisMatchesCurrentEvidence(analysis) {
+  if (!analysis || analysis.agentProfileId !== state.agents[0]?.id) return false;
+  const analyzedIds = [...analysis.documentIds].sort();
+  const currentIds = state.documents.map((document) => document.id).sort();
+  return (
+    analyzedIds.length === currentIds.length &&
+    analyzedIds.every((documentId, index) => documentId === currentIds[index])
+  );
 }
 
 function renderAnalysis() {
@@ -724,7 +742,7 @@ async function runAnalysis() {
   button.textContent = "Running deterministic review…";
   try {
     let analysis = state.analyses[0];
-    if (!analysis)
+    if (!analysisMatchesCurrentEvidence(analysis))
       analysis = await api(`/projects/${state.project.id}/analyses`, {
         method: "POST",
         body: JSON.stringify({
@@ -737,6 +755,7 @@ async function runAnalysis() {
       { method: "POST" },
     );
     state.analyses = await api(`/projects/${state.project.id}/analyses?pageSize=100`);
+    state.analyses.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     state.report = await api(`/analyses/${analysis.id}/report`);
     toast("Analysis complete.");
     renderAnalysis();
