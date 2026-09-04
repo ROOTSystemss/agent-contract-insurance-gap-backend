@@ -7,7 +7,7 @@ import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { auditRoutes } from "./api/audit-routes.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
@@ -35,6 +35,14 @@ export interface BuildAppOptions {
   store?: Store;
   storage?: DocumentStorage;
   logger?: boolean;
+}
+
+function isAllowedOrigin(request: FastifyRequest, configuredOrigins: string[]): boolean {
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  if (configuredOrigins.includes(origin)) return true;
+  if (!request.headers.host) return false;
+  return origin === `${request.protocol}://${request.headers.host}`;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -72,15 +80,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, {
-    origin(origin, callback) {
-      if (!origin || config.corsOrigins.includes(origin)) callback(null, true);
-      else
-        callback(
-          new AppError(403, "CORS_ORIGIN_DENIED", "The request origin is not allowed."),
-          false,
-        );
+    delegator(request, callback) {
+      if (isAllowedOrigin(request, config.corsOrigins)) {
+        callback(null, { origin: true, credentials: false });
+        return;
+      }
+      callback(new AppError(403, "CORS_ORIGIN_DENIED", "The request origin is not allowed."));
     },
-    credentials: false,
   });
   await app.register(rateLimit, {
     max: config.RATE_LIMIT_MAX,

@@ -124,6 +124,29 @@ describe("API integration", () => {
     ).toBe("UNAUTHORIZED");
   });
 
+  it("allows the bundled frontend origin and rejects unrelated origins", async () => {
+    const sameOrigin = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/register",
+      headers: { host: "127.0.0.1:4400", origin: "http://127.0.0.1:4400" },
+      payload: {
+        email: "same-origin@example.test",
+        name: "Same Origin",
+        organizationName: "Same Origin Fictional Ltd",
+        password: "Correct Horse Battery 123!",
+      },
+    });
+    expect(sameOrigin.statusCode).toBe(201);
+    expect(sameOrigin.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:4400");
+
+    const unrelatedOrigin = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: { host: "127.0.0.1:4400", origin: "https://untrusted.example" },
+    });
+    expect(unrelatedOrigin.statusCode).toBe(403);
+  });
+
   it("enforces role restrictions", async () => {
     const viewer = await register("viewer@example.test", "Viewer Person", "Viewer Fictional Ltd");
     store.setRoleForTesting(viewer.user.id, viewer.organization.id, "viewer");
