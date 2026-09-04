@@ -11,6 +11,7 @@ const state = {
   documents: [],
   analyses: [],
   auditEvents: [],
+  members: [],
   report: null,
   view: "overview",
   authMode: "register",
@@ -217,6 +218,7 @@ function logout(showToast = true) {
     documents: [],
     analyses: [],
     auditEvents: [],
+    members: [],
     report: null,
     view: "overview",
   });
@@ -299,12 +301,33 @@ function openProjectSettingsModal() {
       <div class="field"><label for="settings-country">Primary country</label><input id="settings-country" name="primaryCountryCode" maxlength="2" required value="${escapeHtml(project.primaryCountryCode)}" /></div>
       <div class="field"><label for="settings-subdivision">State / subdivision</label><input id="settings-subdivision" name="primarySubdivisionCode" value="${escapeHtml(project.primarySubdivisionCode || "")}" /></div>
       <div class="field full"><label for="settings-affected">Other affected countries</label><input id="settings-affected" name="affectedCountryCodes" value="${escapeHtml(project.affectedCountryCodes.join(", "))}" /></div>
-      <div class="field full"><p id="settings-message" class="form-message"></p><div class="form-actions"><button type="button" class="button button-secondary" data-close-modal>Cancel</button><button type="submit" class="button button-primary">Save changes</button></div></div>
+      <div class="field full"><p id="settings-message" class="form-message"></p><div class="form-actions split-actions"><button type="button" class="button button-ghost danger-text" data-delete-project>Delete review</button><span><button type="button" class="button button-secondary" data-close-modal>Cancel</button> <button type="submit" class="button button-primary">Save changes</button></span></div></div>
     </form></div>`;
   document.body.append(backdrop);
   backdrop
     .querySelectorAll("[data-close-modal]")
     .forEach((button) => button.addEventListener("click", () => backdrop.remove()));
+  backdrop.querySelector("[data-delete-project]").addEventListener("click", async (event) => {
+    if (!window.confirm(`Permanently delete the review “${project.name}” and its records?`)) return;
+    event.currentTarget.disabled = true;
+    try {
+      await api(`/projects/${project.id}`, { method: "DELETE" });
+      sessionStorage.removeItem("authorityAtlasProject");
+      state.project = null;
+      state.agents = [];
+      state.documents = [];
+      state.analyses = [];
+      state.auditEvents = [];
+      state.report = null;
+      state.projects = await api("/projects/?pageSize=100");
+      backdrop.remove();
+      toast("Review deleted.");
+      renderOverview();
+    } catch (error) {
+      toast(error.message, "error");
+      event.currentTarget.disabled = false;
+    }
+  });
   backdrop.querySelector("#settings-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -417,7 +440,7 @@ const capabilityFields = [
 
 function renderAgent() {
   const agent = state.agents[0] || {};
-  shell(`${pageHeader("Step 1 of 3", agent.id ? "Agent authority profile" : "Describe the agent", "Capture what the system can actually do. Precise capability boundaries make the comparison more useful.", agent.id ? '<span class="badge badge-green">Profile saved</span>' : "")}
+  shell(`${pageHeader("Step 1 of 3", agent.id ? "Agent authority profile" : "Describe the agent", "Capture what the system can actually do. Precise capability boundaries make the comparison more useful.", agent.id ? '<span class="badge badge-green">Profile saved</span>' : '<button type="button" class="button button-secondary" data-fill-example>Fill example profile</button>')}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step"></i><i class="progress-step"></i></div>
     <form id="agent-form" class="card form-card">
       <section class="form-section"><div class="form-section-title"><span class="section-number">01</span><div><h3>Identity and deployment</h3><p>Basic operating context for this agent.</p></div></div>
@@ -461,6 +484,50 @@ function renderAgent() {
       <p id="agent-message" class="form-message"></p><div class="form-actions"><button type="submit" class="button button-primary">${agent.id ? "Update profile" : "Save and add evidence"} →</button></div>
     </form>`);
   document.querySelector("#agent-form").addEventListener("submit", submitAgent);
+  document.querySelector("[data-fill-example]")?.addEventListener("click", fillExampleAgent);
+}
+
+function fillExampleAgent() {
+  const form = document.querySelector("#agent-form");
+  const values = {
+    name: "Procurement Agent",
+    deploymentStatus: "pilot",
+    businessPurpose: "Prepare vendor recommendations and execute purchases after approval.",
+    operatorOrganization: state.me.organization.name,
+    developerProvider: "Internal AI team",
+    agentType: "Transaction agent",
+    primaryJurisdiction: state.project.primaryCountryCode,
+    deploymentCountries: state.project.primaryCountryCode,
+    affectedCountries: state.project.affectedCountryCodes.join(", "),
+    autonomyLevel: "4",
+    humanOversightLevel: "threshold_approval",
+    reversibility: "partially_reversible",
+    loggingLevel: "detailed",
+    perTransactionLimit: "5000",
+    aggregateSpendingLimit: "25000",
+    currency: "USD",
+    approvalThresholds: "Human approval above USD 1,000",
+    thirdPartyToolsUsed: "Procurement portal",
+    systemsAccessed: "Vendor database, purchasing system",
+    emergencyStopMechanism: "Operator kill switch",
+    incidentResponseOwner: "Security Operations",
+    knownLimitations: "Cannot independently verify vendor identity",
+  };
+  for (const [name, value] of Object.entries(values)) form.elements[name].value = value;
+  [
+    "canCommunicateExternally",
+    "canMakeRepresentations",
+    "canAcceptTerms",
+    "canExecuteTransactions",
+    "canSpendMoney",
+    "canEnterContracts",
+    "canApproveOrRejectVendors",
+    "canAccessPersonalData",
+    "canAccessConfidentialBusinessData",
+  ].forEach((name) => {
+    form.elements[name].checked = true;
+  });
+  toast("Example profile filled. Review the values, then save.");
 }
 
 const commaList = (value) =>
@@ -660,7 +727,7 @@ function renderAnalysis() {
     );
     return;
   }
-  shell(`${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-print-report>Print report</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
+  shell(`${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-download-pdf>Download PDF</button><button class="button button-secondary" data-print-report>Print</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step done"></i><i class="progress-step done"></i></div>
     ${
       report
@@ -672,6 +739,7 @@ function renderAnalysis() {
   document.querySelector("[data-rerun]")?.addEventListener("click", runAnalysis);
   document.querySelector("[data-print-report]")?.addEventListener("click", () => window.print());
   document.querySelector("[data-download-report]")?.addEventListener("click", downloadReport);
+  document.querySelector("[data-download-pdf]")?.addEventListener("click", downloadPdfReport);
   document.querySelectorAll("[data-finding-status]").forEach((select) =>
     select.addEventListener("change", async () => {
       select.disabled = true;
@@ -736,6 +804,29 @@ function downloadReport() {
   toast("Report export prepared.");
 }
 
+async function downloadPdfReport() {
+  const button = document.querySelector("[data-download-pdf]");
+  const latest = state.analyses[0];
+  button.disabled = true;
+  try {
+    const response = await fetch(`${API}/analyses/${latest.id}/report.pdf`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    });
+    if (!response.ok) throw new Error("The PDF report could not be generated.");
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${state.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-authority-report.pdf`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast("PDF report prepared.");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function runAnalysis() {
   const button = document.querySelector("[data-run-analysis], [data-rerun]");
   button.disabled = true;
@@ -767,17 +858,39 @@ async function runAnalysis() {
 }
 
 async function loadAuditEvents() {
-  state.auditEvents = await api(`/projects/${state.project.id}/audit-events?pageSize=100`);
+  const canManageWorkspace = ["owner", "admin"].includes(state.me.role);
+  [state.auditEvents, state.members] = await Promise.all([
+    api(`/projects/${state.project.id}/audit-events?pageSize=100`),
+    canManageWorkspace ? api("/organizations/current/members") : Promise.resolve([]),
+  ]);
 }
 
 function renderActivity() {
   shell(`${pageHeader("Traceability", "Review activity", "A chronological record of material actions, analysis runs, extraction events, and reviewer decisions.")}
-    <div class="card card-pad"><div class="section-head"><div><h2>Audit trail</h2><p>${state.auditEvents.length} recorded event${state.auditEvents.length === 1 ? "" : "s"} for this review.</p></div><button class="button button-secondary" data-refresh-activity>Refresh</button></div>
+    <div class="activity-layout"><div class="card card-pad"><div class="section-head"><div><h2>Audit trail</h2><p>${state.auditEvents.length} recorded event${state.auditEvents.length === 1 ? "" : "s"} for this review.</p></div><button class="button button-secondary" data-refresh-activity>Refresh</button></div>
       ${state.auditEvents.length ? `<div class="timeline">${state.auditEvents.map((event) => `<div class="timeline-event"><i></i><div><strong>${pretty(event.action.replaceAll(".", " "))}</strong><span>${new Date(event.createdAt).toLocaleString()} · ${escapeHtml(event.resourceType)}</span><code>${escapeHtml(event.requestId)}</code></div></div>`).join("")}</div>` : `<div class="empty-state"><div class="empty-icon">↻</div><h3>No activity recorded yet</h3><p>Material review actions will appear here as you build and analyze the project.</p></div>`}
-    </div>`);
+    </div><aside>${["owner", "admin"].includes(state.me.role) ? `<form id="organization-form" class="card card-pad"><div class="section-head"><div><h2>Workspace settings</h2><p>Organization details for this review environment.</p></div></div><div class="field"><label for="organization-name">Organization name</label><input id="organization-name" name="name" required minlength="2" value="${escapeHtml(state.me.organization.name)}" /></div><button type="submit" class="button button-secondary button-block">Update workspace</button></form><div class="card card-pad" style="margin-top:18px"><div class="section-head"><div><h2>Members</h2><p>${state.members.length} workspace member${state.members.length === 1 ? "" : "s"}</p></div></div><div class="member-list">${state.members.map((member) => `<div><span class="avatar">${escapeHtml(initials(member.user?.name || "Member"))}</span><span><strong>${escapeHtml(member.user?.name || "Workspace member")}</strong><small>${pretty(member.role)}</small></span></div>`).join("")}</div></div>` : '<div class="card card-pad"><h2>Workspace access</h2><p class="muted small">Organization settings are available to owners and administrators.</p></div>'}</aside></div>`);
   document.querySelector("[data-refresh-activity]").addEventListener("click", async () => {
     await loadAuditEvents();
     renderActivity();
+  });
+  document.querySelector("#organization-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      const organization = await api("/organizations/current", {
+        method: "PATCH",
+        body: JSON.stringify({ name: form.elements.name.value }),
+      });
+      state.me.organization = organization;
+      toast("Workspace name updated.");
+      renderActivity();
+    } catch (error) {
+      toast(error.message, "error");
+      button.disabled = false;
+    }
   });
 }
 

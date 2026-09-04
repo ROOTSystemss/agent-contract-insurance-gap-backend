@@ -281,6 +281,15 @@ describe("API integration", () => {
     expect(report.body).toContain("coverage opinion");
     expect(report.body).toContain("scoreContributions");
 
+    const pdfReport = await app.inject({
+      method: "GET",
+      url: `/api/v1/analyses/${analysis.id}/report.pdf`,
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(pdfReport.statusCode).toBe(200);
+    expect(pdfReport.headers["content-type"]).toContain("application/pdf");
+    expect(pdfReport.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+
     expect(
       (
         await app.inject({

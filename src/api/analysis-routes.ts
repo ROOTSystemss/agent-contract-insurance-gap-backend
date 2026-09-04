@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AnalysisService } from "../analysis/analysis-service.js";
 import { ReportService } from "../reports/report-service.js";
+import { generateReportPdf } from "../reports/pdf-report.js";
 import { notFound } from "../shared/errors.js";
 import { actor, audit, paginatedMeta, pagination, requireRole, success } from "./helpers.js";
 import { analysisCreateSchema } from "./schemas.js";
@@ -79,5 +80,23 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
       projectId: report.projectSummary.id,
     });
     return success(request, report);
+  });
+
+  app.get("/:id/report.pdf", async (request, reply) => {
+    const { id } = analysisParams.parse(request.params);
+    const report = await reports.generate(actor(request).organizationId, id);
+    const contents = await generateReportPdf(report);
+    const safeName = report.projectSummary.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80);
+    await audit(app.store, request, "analysis", id, "report.pdf_generate", {
+      projectId: report.projectSummary.id,
+    });
+    return reply
+      .header("Content-Disposition", `attachment; filename="${safeName || "authority-review"}.pdf"`)
+      .type("application/pdf")
+      .send(contents);
   });
 };

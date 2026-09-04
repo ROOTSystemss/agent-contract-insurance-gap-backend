@@ -771,6 +771,12 @@ a {
   gap: 10px;
   margin-top: 23px;
 }
+.split-actions {
+  justify-content: space-between;
+}
+.danger-text {
+  color: var(--red);
+}
 
 .upload-zone {
   display: block;
@@ -1101,6 +1107,36 @@ a {
   gap: 0;
   margin-top: 10px;
 }
+.activity-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  gap: 18px;
+  align-items: start;
+}
+.member-list {
+  display: grid;
+  gap: 11px;
+}
+.member-list > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.member-list .avatar {
+  color: #fff;
+}
+.member-list strong,
+.member-list small {
+  display: block;
+}
+.member-list strong {
+  font-size: 0.74rem;
+}
+.member-list small {
+  margin-top: 2px;
+  color: var(--ink-soft);
+  font-size: 0.65rem;
+}
 .timeline-event {
   position: relative;
   display: grid;
@@ -1295,6 +1331,9 @@ a {
     grid-template-columns: 1fr 1fr;
   }
   .report-grid {
+    grid-template-columns: 1fr;
+  }
+  .activity-layout {
     grid-template-columns: 1fr;
   }
 }
