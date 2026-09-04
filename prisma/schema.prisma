@@ -1,0 +1,267 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  owner
+  admin
+  analyst
+  viewer
+}
+
+enum AnalysisState {
+  draft
+  waiting_for_documents
+  extracting
+  ready
+  running
+  completed
+  completed_with_warnings
+  failed
+}
+
+enum FindingStatus {
+  open
+  under_review
+  accepted
+  mitigated
+  false_positive
+  not_applicable
+}
+
+enum ExtractionStatus {
+  pending
+  completed
+  completed_with_warnings
+  ocr_required
+  failed
+}
+
+enum RetentionStatus {
+  active
+  scheduled_for_deletion
+  deleted
+}
+
+model User {
+  id           String               @id @default(uuid()) @db.Uuid
+  email        String               @unique
+  name         String
+  passwordHash String
+  memberships  OrganizationMember[]
+  uploadedDocs Document[]           @relation("DocumentUploader")
+  auditEvents  AuditEvent[]         @relation("AuditActor")
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+}
+
+model Organization {
+  id          String               @id @default(uuid()) @db.Uuid
+  name        String
+  members     OrganizationMember[]
+  projects    Project[]
+  agents      AgentProfile[]
+  documents   Document[]
+  segments    DocumentSegment[]
+  analyses    Analysis[]
+  findings    Finding[]
+  auditEvents AuditEvent[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  userId         String       @db.Uuid
+  role           Role
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Project {
+  id                     String         @id @default(uuid()) @db.Uuid
+  organizationId         String         @db.Uuid
+  organization           Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                   String
+  description            String?
+  primaryCountryCode     String         @db.VarChar(8)
+  primarySubdivisionCode String?        @db.VarChar(16)
+  affectedCountryCodes   String[]
+  agents                 AgentProfile[]
+  documents              Document[]
+  analyses               Analysis[]
+  findings               Finding[]
+  deletedAt              DateTime?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, deletedAt])
+}
+
+model AgentProfile {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  projectId      String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  profile        Json
+  analyses       Analysis[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, projectId])
+}
+
+model Document {
+  id                 String           @id @default(uuid()) @db.Uuid
+  organizationId     String           @db.Uuid
+  projectId          String           @db.Uuid
+  uploaderId         String           @db.Uuid
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project            Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader           User             @relation("DocumentUploader", fields: [uploaderId], references: [id], onDelete: Restrict)
+  originalFilename   String
+  safeFilename       String
+  mimeType           String
+  size               Int
+  checksum           String
+  documentType       String
+  countryCode        String           @db.VarChar(8)
+  subdivisionCode    String?          @db.VarChar(16)
+  storageKey         String
+  extractionStatus   ExtractionStatus
+  extractionError    String?
+  extractionWarnings String[]
+  pageCount          Int?
+  extractedText      String
+  segments           DocumentSegment[]
+  retentionStatus    RetentionStatus  @default(active)
+  deleteAfter        DateTime?
+  deletedAt          DateTime?
+  analyses           AnalysisDocument[]
+  findings           Finding[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([organizationId, projectId, createdAt])
+  @@index([organizationId, checksum])
+}
+
+model DocumentSegment {
+  id                   String       @id @default(uuid()) @db.Uuid
+  organizationId       String       @db.Uuid
+  documentId           String       @db.Uuid
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  document             Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber            Int?
+  sectionHeading        String?
+  paragraphNumber      Int
+  characterStart       Int
+  characterEnd         Int
+  normalizedText       String
+  originalText         String
+  extractionConfidence Float
+
+  @@index([organizationId, documentId, paragraphNumber])
+}
+
+model Analysis {
+  id                  String             @id @default(uuid()) @db.Uuid
+  organizationId      String             @db.Uuid
+  projectId           String             @db.Uuid
+  agentProfileId      String             @db.Uuid
+  organization        Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project             Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  agentProfile        AgentProfile       @relation(fields: [agentProfileId], references: [id], onDelete: Restrict)
+  state               AnalysisState
+  engineVersion       String
+  rulesetVersions     String[]
+  jurisdictionPackIds String[]
+  attentionScore      Json?
+  warnings            String[]
+  failureReason       String?
+  documents           AnalysisDocument[]
+  findings            Finding[]
+  completedAt         DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([organizationId, projectId, createdAt])
+}
+
+model AnalysisDocument {
+  analysisId String   @db.Uuid
+  documentId String   @db.Uuid
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@id([analysisId, documentId])
+  @@index([documentId])
+}
+
+model Finding {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  analysisId     String        @db.Uuid
+  projectId      String        @db.Uuid
+  documentId     String?       @db.Uuid
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  analysis       Analysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  document       Document?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  category       String
+  severity       String
+  confidence     Float
+  status         FindingStatus @default(open)
+  payload        Json
+  stableKey      String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([analysisId, stableKey])
+  @@index([organizationId, analysisId, severity])
+}
+
+model AuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  actorId        String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User         @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  resourceType   String
+  resourceId     String
+  action         String
+  requestId      String
+  metadata       Json
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, resourceType, resourceId])
+}
+
+model JurisdictionPackRecord {
+  id              String   @id
+  countryCode     String   @db.VarChar(8)
+  subdivisionCode String?  @db.VarChar(16)
+  version         String
+  status          String
+  effectiveDate   DateTime
+  reviewedDate    DateTime?
+  checksum        String
+  payload         Json
+  createdAt       DateTime @default(now())
+
+  @@unique([countryCode, subdivisionCode, version])
+  @@index([countryCode, subdivisionCode, status])
+}

@@ -1,0 +1,2 @@
+export const CANONICAL_DISCLAIMER =
+  "This analysis is an automated informational review intended to identify areas that may warrant further examination. It is not legal advice, insurance advice, a coverage opinion, or a determination of contractual enforceability. Insurance coverage and contractual obligations depend on complete policy language, endorsements, facts, governing law, and professional interpretation. Consult qualified legal counsel and licensed insurance professionals before making decisions.";

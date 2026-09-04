@@ -1,0 +1,6 @@
+node_modules
+dist
+coverage
+uploads
+generated-reports
+package-lock.json

@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: gap_engine
+      POSTGRES_PASSWORD: gap_engine_dev
+      POSTGRES_DB: gap_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - gap_engine_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gap_engine -d gap_engine"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4400
+      DATABASE_URL: postgresql://gap_engine:gap_engine_dev@postgres:5432/gap_engine?schema=public
+      PERSISTENCE_DRIVER: postgres
+      JWT_SECRET: local-compose-9b4fd30e7c8a41c6a5e20978
+      CORS_ORIGINS: http://localhost:3000
+      UPLOAD_DIRECTORY: /app/uploads
+    ports:
+      - "4400:4400"
+    volumes:
+      - gap_engine_uploads:/app/uploads
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+
+volumes:
+  gap_engine_postgres:
+  gap_engine_uploads:

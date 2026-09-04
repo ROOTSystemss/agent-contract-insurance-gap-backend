@@ -1,0 +1,13 @@
+FICTIONAL SOFTWARE-ASSISTED PROCUREMENT AGREEMENT — DEMONSTRATION ONLY
+
+Authorized Tools and Approval Requirements
+
+Authorized users may use software tools to prepare purchase orders and vendor communications. Software tools may not make a binding commitment. Human approval is required before any commitment and before a transaction above USD 1,000.
+
+Authority to Act
+
+Only an identified human procurement manager is authorized to act on behalf of Fictional Acme Procurement Ltd when accepting terms or entering into an agreement.
+
+Audit Log and Security
+
+Detailed audit log records must be retained. Information security measures apply to personal data and confidential information processed through the procurement service.

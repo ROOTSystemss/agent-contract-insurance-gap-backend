@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+uploads/
+generated-reports/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/

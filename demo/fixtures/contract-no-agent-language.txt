@@ -1,0 +1,13 @@
+FICTIONAL COMMERCIAL AGREEMENT — DEMONSTRATION ONLY
+
+Scope of Services
+
+Supplier will provide procurement coordination services to Fictional Acme Procurement Ltd. Supplier personnel may prepare purchase orders and communicate with approved vendors.
+
+Confidentiality
+
+Each party will protect confidential information and use it only to perform this agreement.
+
+Recordkeeping
+
+Transaction records must be retained for internal audit. This fictional agreement intentionally contains no language specifically addressing autonomous software agents.
