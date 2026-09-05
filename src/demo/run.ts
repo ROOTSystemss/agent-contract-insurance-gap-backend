@@ -3,7 +3,7 @@ import path from "node:path";
 import { AnalysisService } from "../analysis/analysis-service.js";
 import { loadConfig } from "../config/env.js";
 import { DocumentService } from "../documents/document-service.js";
-import { LocalDocumentStorage } from "../documents/storage.js";
+import { MemoryDocumentStorage } from "../documents/storage.js";
 import { MemoryStore } from "../persistence/memory-store.js";
 import { ReportService } from "../reports/report-service.js";
 import { procurementAgent } from "./data.js";
@@ -34,11 +34,7 @@ async function main(): Promise<void> {
     project.id,
     procurementAgent(),
   );
-  const documents = new DocumentService(
-    store,
-    new LocalDocumentStorage(path.resolve(config.UPLOAD_DIRECTORY)),
-    config,
-  );
+  const documents = new DocumentService(store, new MemoryDocumentStorage(), config);
   const fixture = await readFile(path.resolve("demo/fixtures/contract-human-approval.txt"));
   const document = await documents.upload({
     organizationId: registration.organization.id,

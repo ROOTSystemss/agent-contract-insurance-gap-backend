@@ -292,6 +292,17 @@ export class MemoryStore implements Store {
     return clone(deleted);
   }
 
+  async listDocumentsDueForDeletion(before: string, limit: number): Promise<DocumentRecord[]> {
+    return [...this.documents.values()]
+      .filter(
+        (document) =>
+          !document.deletedAt && Boolean(document.deleteAfter) && document.deleteAfter! <= before,
+      )
+      .sort((left, right) => left.deleteAfter!.localeCompare(right.deleteAfter!))
+      .slice(0, limit)
+      .map(clone);
+  }
+
   async createAnalysis(analysis: Analysis): Promise<Analysis> {
     this.analyses.set(analysis.id, clone(analysis));
     return clone(analysis);

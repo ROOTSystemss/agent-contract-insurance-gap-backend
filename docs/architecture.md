@@ -10,7 +10,7 @@ HTTP → validation/auth/role check → application service → domain rules
                            PostgreSQL     Memory      private local files
 ```
 
-Document bytes are validated, checksummed, privately stored, extracted, and segmented. The detector returns exact evidence references. The gap engine compares declared capabilities with detected/absent clause concepts. The scoring module returns reproducible contributions. The report assembler groups—not reinterprets—stored findings.
+Document bytes are validated, checksummed, optionally wrapped in authenticated AES-256-GCM encryption, privately stored, extracted, and segmented. A scheduled retention sweep removes expired bytes and logically deletes their extracted database content. The detector returns exact evidence references. The gap engine compares declared capabilities with detected/absent clause concepts. The scoring module returns reproducible contributions and severity guardrails. The report assembler groups—not reinterprets—stored findings and can produce structured JSON or a branded PDF.
 
 Tenant IDs are derived from verified JWT membership, never accepted from request bodies. Every tenant-owned lookup includes organization ID. Audit events contain identifiers and limited metadata, never full text, passwords, or tokens.
 

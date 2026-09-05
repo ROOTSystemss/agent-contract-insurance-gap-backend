@@ -21,7 +21,11 @@ import { projectRoutes } from "./api/project-routes.js";
 import { uiRoutes } from "./api/ui-routes.js";
 import { loadConfig, type AppConfig } from "./config/env.js";
 import { DocumentService } from "./documents/document-service.js";
-import { LocalDocumentStorage, type DocumentStorage } from "./documents/storage.js";
+import {
+  EncryptedDocumentStorage,
+  LocalDocumentStorage,
+  type DocumentStorage,
+} from "./documents/storage.js";
 import { JURISDICTION_PACKS } from "./jurisdictions/packs.js";
 import { MemoryStore } from "./persistence/memory-store.js";
 import { PrismaStore } from "./persistence/prisma-store.js";
@@ -50,8 +54,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const store =
     options.store ??
     (config.PERSISTENCE_DRIVER === "postgres" ? new PrismaStore() : new MemoryStore());
+  const localStorage = new LocalDocumentStorage(path.resolve(config.UPLOAD_DIRECTORY));
   const storage =
-    options.storage ?? new LocalDocumentStorage(path.resolve(config.UPLOAD_DIRECTORY));
+    options.storage ??
+    (config.DOCUMENT_ENCRYPTION_KEY
+      ? new EncryptedDocumentStorage(
+          localStorage,
+          Buffer.from(config.DOCUMENT_ENCRYPTION_KEY, "base64"),
+        )
+      : localStorage);
   const app = Fastify({
     logger:
       options.logger === false
@@ -75,10 +86,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.decorate("store", store);
-  app.decorate("documentService", new DocumentService(store, storage, config));
+  const documentService = new DocumentService(store, storage, config);
+  app.decorate("documentService", documentService);
   app.decorateRequest("actor", null);
 
-  await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'none'"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'", "data:"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        imgSrc: ["'self'", "data:"],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
+    },
+  });
   await app.register(cors, {
     delegator(request, callback) {
       if (isAllowedOrigin(request, config.corsOrigins)) {
@@ -133,7 +160,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
 
+  let retentionTimer: NodeJS.Timeout | undefined;
+  app.addHook("onReady", async () => {
+    const result = await documentService.purgeExpired();
+    if (result.deleted || result.failed) app.log.info(result, "document retention sweep completed");
+    retentionTimer = setInterval(() => {
+      void documentService
+        .purgeExpired()
+        .then((sweep) => {
+          if (sweep.deleted || sweep.failed)
+            app.log.info(sweep, "document retention sweep completed");
+        })
+        .catch((error: unknown) =>
+          app.log.error({ err: error }, "document retention sweep failed"),
+        );
+    }, config.RETENTION_SWEEP_INTERVAL_MS);
+    retentionTimer.unref();
+  });
+
   app.addHook("onClose", async () => {
+    if (retentionTimer) clearInterval(retentionTimer);
     if (store instanceof PrismaStore) await store.disconnect();
   });
 
@@ -149,7 +195,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       await mkdir(path.resolve(config.UPLOAD_DIRECTORY), { recursive: true });
       await store.ready();
       return {
-        data: { status: "ready", persistence: config.PERSISTENCE_DRIVER },
+        data: {
+          status: "ready",
+          persistence: config.PERSISTENCE_DRIVER,
+          documentEncryption: Boolean(config.DOCUMENT_ENCRYPTION_KEY),
+        },
         meta: {},
         requestId: request.id,
       };

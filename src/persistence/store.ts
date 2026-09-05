@@ -84,6 +84,7 @@ export interface Store {
   getDocument(organizationId: string, id: string): Promise<DocumentRecord | null>;
   updateDocument(document: DocumentRecord): Promise<DocumentRecord | null>;
   deleteDocument(organizationId: string, id: string): Promise<DocumentRecord | null>;
+  listDocumentsDueForDeletion(before: string, limit: number): Promise<DocumentRecord[]>;
 
   createAnalysis(analysis: Analysis): Promise<Analysis>;
   listAnalyses(

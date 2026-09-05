@@ -84,11 +84,13 @@ npm run prisma:migrate
 
 ## Docker
 
+Copy `.env.docker.example` to `.env`, replace every placeholder with independently generated values, and URL-encode the database password inside `DATABASE_URL`. Then run:
+
 ```bash
 docker compose up --build
 ```
 
-The API listens on `http://localhost:4400`. Change the compose JWT secret before any shared use. Uploaded files and PostgreSQL data use named volumes and are not publicly served.
+The API listens on `http://localhost:4400`. Compose now fails closed when database, JWT, or document-encryption secrets are absent. Uploaded files and PostgreSQL data use named volumes and are not publicly served.
 
 ## Commands
 
@@ -102,8 +104,10 @@ npm run format:check
 npm test
 npm run test:live
 npm run test:coverage
+npm run verify
 npm run prisma:validate
 npm run demo
+npm run postgres:backup
 ```
 
 `npm run demo` uses memory persistence and prints report-ready JSON. It requires no credentials or external service. With a server already running, `npm run test:live` exercises the complete HTTP workflow from registration through report generation.
@@ -120,8 +124,10 @@ npm run demo
 | `JWT_EXPIRES_IN`                      | access-token lifetime                                                         |
 | `CORS_ORIGINS`                        | comma-separated exact allowed origins                                         |
 | `UPLOAD_DIRECTORY`                    | private local document store                                                  |
+| `DOCUMENT_ENCRYPTION_KEY`             | base64 256-bit AES-GCM key; required in production                            |
 | `MAX_FILE_SIZE_BYTES`                 | upload size ceiling                                                           |
 | `DOCUMENT_RETENTION_DAYS`             | initial deletion-review date                                                  |
+| `RETENTION_SWEEP_INTERVAL_MS`         | interval for automatic expired-document deletion                              |
 | `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW` | global request throttling                                                     |
 | `LOG_LEVEL`, `TRUST_PROXY`            | operations settings                                                           |
 
@@ -139,8 +145,8 @@ npm run demo
 - Jurisdictions and packs: list/get
 - Projects: create/list/get/update/logical delete
 - Agent profiles: create/list/get/update/delete
-- Documents: multipart upload/list/get/safe delete/retry extraction
-- Analyses: create/list/get/run/rerun/findings/report
+- Documents: multipart upload/list/get/safe delete/retry extraction/automatic retention purge
+- Analyses: create/list/get/run/rerun/findings/JSON and PDF reports
 - Findings: get/update workflow status
 - Audit: project audit-event list
 
@@ -209,9 +215,9 @@ Override `DEMO_PASSWORD` before seeding any shared environment. Never use demo c
 - Scanned PDFs are detected and marked `ocr_required`; OCR is not bundled.
 - Page-level PDF text is extracted, but current segmentation does not yet preserve exact per-page mapping.
 - Initial country packs contain no localized rules pending qualified professional review.
-- Local filesystem storage should be replaced with an encrypted S3-compatible adapter for horizontally scaled deployments.
+- Local document bytes support authenticated AES-256-GCM encryption when `DOCUMENT_ENCRYPTION_KEY` is configured. Horizontally scaled deployments still require an encrypted S3-compatible adapter.
 - JWT access tokens have no refresh/revocation service yet.
-- Next milestones: qualified pack review workflow, encrypted object storage, asynchronous extraction queue, OCR adapter, membership administration, refresh tokens, and a report/PDF presentation layer.
+- Next milestones requiring external infrastructure or professional input: qualified pack review, encrypted object storage, asynchronous extraction/OCR workers, membership invitations, refresh-token revocation, email delivery, and production monitoring/backups.
 
 ## License
 

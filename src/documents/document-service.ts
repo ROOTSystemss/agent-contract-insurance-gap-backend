@@ -95,9 +95,26 @@ export class DocumentService {
   }
 
   async delete(organizationId: string, id: string): Promise<boolean> {
-    const document = await this.store.deleteDocument(organizationId, id);
+    const document = await this.store.getDocument(organizationId, id);
     if (!document) return false;
     await this.storage.delete(document.storageKey);
-    return true;
+    return Boolean(await this.store.deleteDocument(organizationId, id));
+  }
+
+  async purgeExpired(
+    before = new Date().toISOString(),
+    limit = 100,
+  ): Promise<{ deleted: number; failed: number }> {
+    const due = await this.store.listDocumentsDueForDeletion(before, limit);
+    let deleted = 0;
+    let failed = 0;
+    for (const document of due) {
+      try {
+        if (await this.delete(document.organizationId, document.id)) deleted += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { deleted, failed };
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Document, Packer, Paragraph } from "docx";
@@ -10,7 +10,11 @@ import {
   segmentText,
   validateDocumentFile,
 } from "../src/documents/extraction.js";
-import { LocalDocumentStorage, sanitizeFilename } from "../src/documents/storage.js";
+import {
+  EncryptedDocumentStorage,
+  LocalDocumentStorage,
+  sanitizeFilename,
+} from "../src/documents/storage.js";
 
 const tempPaths: string[] = [];
 
@@ -92,5 +96,24 @@ describe("document extraction and storage", () => {
       "fictional",
     );
     await expect(storage.put("../escape.txt", Buffer.from("bad"))).rejects.toThrow("storage key");
+  });
+
+  it("encrypts local documents and rejects authenticated-data tampering", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "gap-encrypted-storage-"));
+    tempPaths.push(root);
+    const local = new LocalDocumentStorage(root);
+    const storage = new EncryptedDocumentStorage(local, Buffer.alloc(32, 7));
+    const storageKey = "org/project/encrypted.txt";
+    const plaintext = Buffer.from("confidential fictional contract language");
+    await storage.put(storageKey, plaintext);
+
+    const target = path.join(root, "org", "project", "encrypted.txt");
+    const raw = await readFile(target);
+    expect(raw.includes(plaintext)).toBe(false);
+    expect(await storage.get(storageKey)).toEqual(plaintext);
+
+    raw[raw.length - 1] = raw[raw.length - 1]! ^ 1;
+    await writeFile(target, raw);
+    await expect(storage.get(storageKey)).rejects.toThrow("authentication failed");
   });
 });

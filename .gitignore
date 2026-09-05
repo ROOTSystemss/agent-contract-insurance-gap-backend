@@ -4,9 +4,11 @@ coverage/
 .env
 .env.*
 !.env.example
+!.env.docker.example
 uploads/
 generated-reports/
 logs/
+backups/
 *.log
 *.db
 *.sqlite

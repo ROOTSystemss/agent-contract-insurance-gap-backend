@@ -346,6 +346,21 @@ export class PrismaStore implements Store {
     };
   }
 
+  async listDocumentsDueForDeletion(before: string, limit: number): Promise<DocumentRecord[]> {
+    const rows = await this.client.document.findMany({
+      where: { deletedAt: null, deleteAfter: { lte: new Date(before) } },
+      select: { id: true, organizationId: true },
+      orderBy: { deleteAfter: "asc" },
+      take: limit,
+    });
+    const documents: DocumentRecord[] = [];
+    for (const row of rows) {
+      const document = await this.getDocument(row.organizationId, row.id);
+      if (document) documents.push(document);
+    }
+    return documents;
+  }
+
   async createAnalysis(analysis: Analysis): Promise<Analysis> {
     const row = await this.client.analysis.create({
       data: {

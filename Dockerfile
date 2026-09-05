@@ -16,6 +16,7 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate && npm cache clean --force
 COPY --from=build /app/dist ./dist
+COPY public ./public
 RUN mkdir -p /app/uploads && chown -R app:app /app
 USER app
 EXPOSE 4400

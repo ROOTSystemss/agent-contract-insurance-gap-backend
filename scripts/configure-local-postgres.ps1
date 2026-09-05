@@ -25,6 +25,9 @@ try {
   $jwtBytes = New-Object byte[] 48
   [Security.Cryptography.RandomNumberGenerator]::Fill($jwtBytes)
   $jwtSecret = [Convert]::ToBase64String($jwtBytes)
+  $encryptionBytes = New-Object byte[] 32
+  [Security.Cryptography.RandomNumberGenerator]::Fill($encryptionBytes)
+  $documentEncryptionKey = [Convert]::ToBase64String($encryptionBytes)
 
   $settings = @(
     "NODE_ENV=development",
@@ -36,8 +39,10 @@ try {
     "CORS_ORIGINS=http://localhost:4400,http://127.0.0.1:4400",
     "PERSISTENCE_DRIVER=postgres",
     "UPLOAD_DIRECTORY=./uploads",
+    "DOCUMENT_ENCRYPTION_KEY=$documentEncryptionKey",
     "MAX_FILE_SIZE_BYTES=10485760",
     "DOCUMENT_RETENTION_DAYS=30",
+    "RETENTION_SWEEP_INTERVAL_MS=3600000",
     "RATE_LIMIT_MAX=100",
     "RATE_LIMIT_WINDOW=1 minute",
     "LOG_LEVEL=info",

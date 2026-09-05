@@ -16,12 +16,22 @@ const envSchema = z
     CORS_ORIGINS: z.string().default("http://localhost:3000"),
     PERSISTENCE_DRIVER: z.enum(["memory", "postgres"]).default("memory"),
     UPLOAD_DIRECTORY: z.string().default("./uploads"),
+    DOCUMENT_ENCRYPTION_KEY: z
+      .string()
+      .refine(
+        (value) => /^[A-Za-z0-9+/]{43}=$/.test(value) && Buffer.from(value, "base64").length === 32,
+        {
+          message: "DOCUMENT_ENCRYPTION_KEY must be a base64-encoded 32-byte key.",
+        },
+      )
+      .optional(),
     MAX_FILE_SIZE_BYTES: z.coerce
       .number()
       .int()
       .positive()
       .default(10 * 1024 * 1024),
     DOCUMENT_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
+    RETENTION_SWEEP_INTERVAL_MS: z.coerce.number().int().min(60_000).default(3_600_000),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
     RATE_LIMIT_WINDOW: z.string().default("1 minute"),
     LOG_LEVEL: z
@@ -44,6 +54,13 @@ const envSchema = z
           code: "custom",
           path: ["DATABASE_URL"],
           message: "Production requires PostgreSQL persistence and DATABASE_URL.",
+        });
+      }
+      if (!env.DOCUMENT_ENCRYPTION_KEY) {
+        context.addIssue({
+          code: "custom",
+          path: ["DOCUMENT_ENCRYPTION_KEY"],
+          message: "Production requires encrypted document storage.",
         });
       }
     }

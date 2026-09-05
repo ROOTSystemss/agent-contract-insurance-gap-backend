@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -89,6 +89,8 @@ describe("API integration", () => {
     expect(productUi.statusCode).toBe(200);
     expect(productUi.headers["content-type"]).toContain("text/html");
     expect(productUi.body).toContain("Authority Atlas");
+    expect(productUi.headers["content-security-policy"]).toContain("default-src 'self'");
+    expect(productUi.headers["x-content-type-options"]).toBe("nosniff");
     expect((await app.inject({ method: "GET", url: "/styles.css" })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: "/app.js" })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
@@ -299,5 +301,28 @@ describe("API integration", () => {
         })
       ).statusCode,
     ).toBe(404);
+  });
+
+  it("purges expired document metadata and stored content", async () => {
+    const project = await createProject(owner.accessToken, "Retention Review");
+    const document = await app.documentService.upload({
+      organizationId: owner.organization.id,
+      projectId: project.id,
+      uploaderId: owner.user.id,
+      filename: "expired.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Fictional contract content for retention testing."),
+      documentType: "commercial_contract",
+      countryCode: "US",
+    });
+    await store.updateDocument({
+      ...document,
+      deleteAfter: new Date(0).toISOString(),
+    });
+
+    const sweep = await app.documentService.purgeExpired();
+    expect(sweep).toEqual({ deleted: 1, failed: 0 });
+    expect(await store.getDocument(owner.organization.id, document.id)).toBeNull();
+    await expect(access(path.join(uploadDirectory, document.storageKey))).rejects.toThrow();
   });
 });

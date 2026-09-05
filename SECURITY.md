@@ -4,7 +4,9 @@ Report vulnerabilities privately to the repository owner; do not open a public i
 
 ## Data handling
 
-Contracts and insurance policies may be highly confidential. Production deployments should use encrypted object storage, encrypted database volumes, TLS, least-privilege service credentials, centralized secret management, backups, retention enforcement, monitoring, and documented incident response. Local uploads are private and never served by Fastify.
+Contracts and insurance policies may be highly confidential. Local document storage supports authenticated AES-256-GCM encryption through `DOCUMENT_ENCRYPTION_KEY`, and expired documents are automatically purged according to the configured retention window. Production deployments should still use encrypted object storage, encrypted database volumes, TLS, least-privilege service credentials, centralized secret management, backups, monitoring, and documented incident response. Local uploads are private and never served by Fastify.
+
+Never rotate `DOCUMENT_ENCRYPTION_KEY` without first decrypting and re-encrypting existing objects through an approved migration. Losing the key makes stored document bytes unrecoverable.
 
 Passwords and JWTs are redacted from application logs. Uploaded document content is not included in audit metadata. Production startup rejects weak JWT configuration and memory persistence.
 

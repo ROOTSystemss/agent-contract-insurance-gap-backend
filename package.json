@@ -16,11 +16,13 @@
     "test:live": "node scripts/live-smoke.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run prisma:validate",
     "prisma:generate": "prisma generate",
-    "prisma:validate": "prisma validate",
+    "prisma:validate": "node scripts/validate-prisma.mjs",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
+    "postgres:backup": "powershell -ExecutionPolicy Bypass -File scripts/configure-postgres-backup.ps1",
     "demo": "npm run build && node dist/demo/run.js"
   },
   "prisma": {
