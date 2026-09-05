@@ -1,7 +1,10 @@
+import { existsSync } from "node:fs";
+import { loadEnvFile } from "node:process";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
 
 async function main(): Promise<void> {
+  if (existsSync(".env")) loadEnvFile(".env");
   const config = loadConfig();
   const app = await buildApp({ config });
   const shutdown = async (signal: string) => {
