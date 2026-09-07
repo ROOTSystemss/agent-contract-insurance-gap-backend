@@ -23,10 +23,14 @@ try {
   $databaseUrl = "postgresql://${DatabaseUser}:${encodedPassword}@127.0.0.1:${Port}/${Database}?schema=public"
 
   $jwtBytes = New-Object byte[] 48
-  [Security.Cryptography.RandomNumberGenerator]::Fill($jwtBytes)
-  $jwtSecret = [Convert]::ToBase64String($jwtBytes)
   $encryptionBytes = New-Object byte[] 32
-  [Security.Cryptography.RandomNumberGenerator]::Fill($encryptionBytes)
+  $random = [Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $random.GetBytes($jwtBytes)
+    $random.GetBytes($encryptionBytes)
+  }
+  finally { $random.Dispose() }
+  $jwtSecret = [Convert]::ToBase64String($jwtBytes)
   $documentEncryptionKey = [Convert]::ToBase64String($encryptionBytes)
 
   $settings = @(

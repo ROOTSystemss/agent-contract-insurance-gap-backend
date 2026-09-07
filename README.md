@@ -82,6 +82,18 @@ For a development migration after changing the schema:
 npm run prisma:migrate
 ```
 
+The normal Windows helper securely prompts for the existing PostgreSQL administrator password:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/configure-local-postgres.ps1
+```
+
+If that password has been lost but another local project already has a working PostgreSQL credential, the following helper can reuse it without displaying the credential, restarting PostgreSQL, or changing authentication. It creates a restricted account and database used only by Authority Atlas:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/configure-from-existing-postgres.ps1
+```
+
 ## Docker
 
 Copy `.env.docker.example` to `.env`, replace every placeholder with independently generated values, and URL-encode the database password inside `DATABASE_URL`. Then run:

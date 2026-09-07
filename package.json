@@ -14,6 +14,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:live": "node scripts/live-smoke.mjs",
+    "test:clean": "node scripts/cleanup-local-smoke-data.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run prisma:validate",
