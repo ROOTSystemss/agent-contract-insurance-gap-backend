@@ -38,6 +38,17 @@ const envSchema = z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
     TRUST_PROXY: booleanFromString,
+    // Minimal single-client OAuth2-authorization-code IdP config for "Sign in with
+    // Authority Atlas" on AI Compliance Readiness. Readiness is the only registered
+    // client — no dynamic client registration — so a static shared secret configured
+    // identically on both sides is the whole trust model (same pattern as ATLAS_URL
+    // on the Readiness side).
+    ATLAS_OAUTH_CLIENT_ID: z.string().default("ai-compliance-readiness"),
+    ATLAS_OAUTH_CLIENT_SECRET: z
+      .string()
+      .default("development-only-oauth-secret-change-before-production"),
+    ATLAS_OAUTH_REDIRECT_URIS: z.string().default("http://localhost:4605/auth/atlas/callback"),
+    ATLAS_OAUTH_CODE_TTL_MS: z.coerce.number().int().min(15_000).max(300_000).default(60_000),
   })
   .superRefine((env, context) => {
     if (env.NODE_ENV === "production") {
@@ -63,10 +74,33 @@ const envSchema = z
           message: "Production requires encrypted document storage.",
         });
       }
+      if (
+        env.ATLAS_OAUTH_CLIENT_SECRET.length < 32 ||
+        /development|replace|secret/i.test(env.ATLAS_OAUTH_CLIENT_SECRET)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["ATLAS_OAUTH_CLIENT_SECRET"],
+          message:
+            "Production ATLAS_OAUTH_CLIENT_SECRET must be at least 32 characters and must not be a placeholder.",
+        });
+      }
+      for (const uri of env.ATLAS_OAUTH_REDIRECT_URIS.split(",").map((value) => value.trim())) {
+        if (uri && !uri.startsWith("https://")) {
+          context.addIssue({
+            code: "custom",
+            path: ["ATLAS_OAUTH_REDIRECT_URIS"],
+            message: `Production ATLAS_OAUTH_REDIRECT_URIS entries must be https:// — got "${uri}".`,
+          });
+        }
+      }
     }
   });
 
-export type AppConfig = z.infer<typeof envSchema> & { corsOrigins: string[] };
+export type AppConfig = z.infer<typeof envSchema> & {
+  corsOrigins: string[];
+  atlasOAuthRedirectUris: string[];
+};
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(source);
@@ -74,6 +108,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     ...parsed,
     corsOrigins: parsed.CORS_ORIGINS.split(",")
       .map((origin) => origin.trim())
+      .filter(Boolean),
+    atlasOAuthRedirectUris: parsed.ATLAS_OAUTH_REDIRECT_URIS.split(",")
+      .map((uri) => uri.trim())
       .filter(Boolean),
   };
 }

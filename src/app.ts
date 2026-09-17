@@ -19,7 +19,10 @@ import { jurisdictionRoutes } from "./api/jurisdiction-routes.js";
 import { organizationRoutes } from "./api/organization-routes.js";
 import { projectRoutes } from "./api/project-routes.js";
 import { uiRoutes } from "./api/ui-routes.js";
+import { governanceRoutes } from "./api/governance-routes.js";
+import { oauthRoutes } from "./api/oauth-routes.js";
 import { loadConfig, type AppConfig } from "./config/env.js";
+import { OAuthCodeStore } from "./security/oauth-code-store.js";
 import { DocumentService } from "./documents/document-service.js";
 import {
   EncryptedDocumentStorage,
@@ -75,6 +78,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
                 "req.headers.cookie",
                 "req.body.password",
                 "req.body.token",
+                "req.body.clientSecret",
+                "req.body.code",
                 "res.headers['set-cookie']",
               ],
               censor: "[REDACTED]",
@@ -88,6 +93,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.decorate("store", store);
   const documentService = new DocumentService(store, storage, config);
   app.decorate("documentService", documentService);
+  const oauthCodes = new OAuthCodeStore(config.ATLAS_OAUTH_CODE_TTL_MS);
+  app.decorate("oauthCodes", oauthCodes);
   app.decorateRequest("actor", null);
 
   await app.register(helmet, {
@@ -180,55 +187,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.addHook("onClose", async () => {
     if (retentionTimer) clearInterval(retentionTimer);
+    oauthCodes.stop();
     if (store instanceof PrismaStore) await store.disconnect();
   });
 
-  app.get(
-    "/health",
-    { schema: { tags: ["system"], summary: "Liveness check" } },
-    async (request) => ({ data: { status: "ok" }, meta: {}, requestId: request.id }),
-  );
-  app.get(
-    "/ready",
-    { schema: { tags: ["system"], summary: "Readiness check" } },
-    async (request) => {
-      await mkdir(path.resolve(config.UPLOAD_DIRECTORY), { recursive: true });
-      await store.ready();
-      return {
-        data: {
-          status: "ready",
-          persistence: config.PERSISTENCE_DRIVER,
-          documentEncryption: Boolean(config.DOCUMENT_ENCRYPTION_KEY),
-        },
-        meta: {},
-        requestId: request.id,
-      };
-    },
-  );
-  app.get("/api/v1/meta", async (request) => ({
-    data: {
-      name: "Agent Contract & Insurance Gap Engine",
-      version: "0.1.0",
-      engineVersion: "gap-engine@1.0.0",
-      primaryStatement:
-        "Identify where an AI agent’s actual authority may exceed what your contracts and insurance policies clearly contemplate.",
-      deterministicByDefault: true,
-      externalAiRequired: false,
-      jurisdictionPacks: JURISDICTION_PACKS.map((pack) => ({
-        id: pack.id,
-        countryCode: pack.countryCode,
-        status: pack.status,
-        version: pack.version,
-      })),
-      disclaimer: CANONICAL_DISCLAIMER,
-    },
-    meta: {},
-    requestId: request.id,
-  }));
-  app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
-
-  await app.register(uiRoutes);
-
+  // Must be set before ANY route is registered (directly or via app.register(plugin)):
+  // Fastify's encapsulation snapshots each child context's error/not-found handler at the
+  // moment it's created, so a plugin registered before these calls silently keeps Fastify's
+  // default (undecorated) error shape instead of this app's {error:{code,message,details,
+  // requestId}} contract. governanceRoutes previously sat before this block and its errors
+  // were bypassing the contract as a result - caught while adding oauthRoutes below.
   app.setNotFoundHandler((request, reply) => {
     void reply.code(404).send({
       error: {
@@ -285,6 +253,54 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       },
     });
   });
+
+  app.get(
+    "/health",
+    { schema: { tags: ["system"], summary: "Liveness check" } },
+    async (request) => ({ data: { status: "ok" }, meta: {}, requestId: request.id }),
+  );
+  app.get(
+    "/ready",
+    { schema: { tags: ["system"], summary: "Readiness check" } },
+    async (request) => {
+      await mkdir(path.resolve(config.UPLOAD_DIRECTORY), { recursive: true });
+      await store.ready();
+      return {
+        data: {
+          status: "ready",
+          persistence: config.PERSISTENCE_DRIVER,
+          documentEncryption: Boolean(config.DOCUMENT_ENCRYPTION_KEY),
+        },
+        meta: {},
+        requestId: request.id,
+      };
+    },
+  );
+  app.get("/api/v1/meta", async (request) => ({
+    data: {
+      name: "Agent Contract & Insurance Gap Engine",
+      version: "0.1.0",
+      engineVersion: "gap-engine@1.0.0",
+      primaryStatement:
+        "Identify where an AI agent’s actual authority may exceed what your contracts and insurance policies clearly contemplate.",
+      deterministicByDefault: true,
+      externalAiRequired: false,
+      jurisdictionPacks: JURISDICTION_PACKS.map((pack) => ({
+        id: pack.id,
+        countryCode: pack.countryCode,
+        status: pack.status,
+        version: pack.version,
+      })),
+      disclaimer: CANONICAL_DISCLAIMER,
+    },
+    meta: {},
+    requestId: request.id,
+  }));
+  app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
+
+  await app.register(uiRoutes);
+  await app.register(governanceRoutes, { prefix: "/api/v1/governance" });
+  await app.register(oauthRoutes, { prefix: "/api/v1/oauth", config });
 
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
   await app.register(organizationRoutes, { prefix: "/api/v1/organizations" });

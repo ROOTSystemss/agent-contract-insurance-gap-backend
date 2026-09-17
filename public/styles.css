@@ -1263,6 +1263,21 @@ a {
   display: grid;
   gap: 9px;
 }
+.session-signout {
+  flex-shrink: 0;
+  min-height: 44px;
+}
+:focus-visible {
+  outline: 3px solid var(--orange, #ed781b);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
 .toast {
   max-width: 390px;
   padding: 13px 16px;
@@ -1383,6 +1398,14 @@ a {
   }
   .content {
     padding: 27px 17px 95px;
+  }
+  .toast-region {
+    left: 16px;
+    right: 16px;
+    bottom: calc(82px + env(safe-area-inset-bottom));
+  }
+  input, textarea, select {
+    font-size: 16px;
   }
   .page-header {
     display: block;

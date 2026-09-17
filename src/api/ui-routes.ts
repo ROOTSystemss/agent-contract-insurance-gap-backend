@@ -7,10 +7,12 @@ const assets = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
   "/favicon.svg": { file: "favicon.svg", type: "image/svg+xml" },
+  "/oauth/authorize": { file: "authorize.html", type: "text/html; charset=utf-8" },
+  "/authorize.js": { file: "authorize.js", type: "text/javascript; charset=utf-8" },
 } as const;
 
 export const uiRoutes: FastifyPluginAsync = async (app) => {
-  const publicDirectory = path.resolve(process.cwd(), "public");
+  const publicDirectory = path.resolve(__dirname, "../../public");
 
   for (const [route, asset] of Object.entries(assets)) {
     app.get(route, async (_request, reply) => {

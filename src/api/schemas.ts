@@ -55,6 +55,21 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({ email: z.email(), password: z.string().min(1).max(128) });
 
+export const oauthAuthorizeSchema = z.object({
+  clientId: z.string().min(1).max(200),
+  redirectUri: z.url().max(2000),
+  state: z.string().min(1).max(500),
+  responseType: z.literal("code"),
+});
+
+export const oauthTokenSchema = z.object({
+  grantType: z.literal("authorization_code"),
+  code: z.string().min(1).max(500),
+  redirectUri: z.url().max(2000),
+  clientId: z.string().min(1).max(200),
+  clientSecret: z.string().min(1).max(500),
+});
+
 export const projectCreateSchema = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(2000).nullable().default(null),

@@ -167,17 +167,29 @@ function shell(content) {
       <nav aria-label="Main navigation">${nav.map(([view, label, ico]) => `<button class="nav-button ${state.view === view ? "active" : ""}" data-view="${view}">${icon(ico)}<span>${label}</span></button>`).join("")}</nav>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-card"><strong>Decision support</strong><p>Results identify attention areas. Always involve qualified legal and insurance professionals.</p></div>
-      <div class="user-menu"><div class="avatar">${escapeHtml(initials(user.name))}</div><div class="user-copy"><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(org.name)}</span></div><button class="logout" data-logout aria-label="Sign out">↗</button></div>
+      <div class="user-menu"><div class="avatar">${escapeHtml(initials(user.name))}</div><div class="user-copy"><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(org.name)}</span></div></div>
     </aside>
     <section class="main">
-      <header class="topbar"><div class="breadcrumb"><span>${escapeHtml(org.name || "Workspace")}</span><span class="slash">/</span><strong>${escapeHtml(state.project?.name || "All projects")}</strong></div><div class="status-pill"><i class="status-dot"></i>Local secure session</div></header>
-      <div class="content">${content}</div>
+      <header class="topbar"><div class="breadcrumb"><span>${escapeHtml(org.name || "Workspace")}</span><span class="slash">/</span><strong>${escapeHtml(state.project?.name || "All projects")}</strong></div><button class="button button-secondary session-signout" data-logout aria-label="Sign out">Sign out</button></header>
+      <div class="content">${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Governance suite · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
     </section>
   </div>`;
   bindShell();
 }
 
 function bindShell() {
+  document.querySelector("[data-governance-export]")?.addEventListener("click", async () => {
+    try {
+      const summary = await api("/governance/export");
+      const url = URL.createObjectURL(new Blob([JSON.stringify(summary, null, 2)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "atlas-governance-summary.json";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("Summary exported. Import it in AI Governance; it contains project names and statuses.");
+    } catch (error) { toast(error.message, "error"); }
+  });
   document
     .querySelectorAll("[data-view]")
     .forEach((button) => button.addEventListener("click", () => navigate(button.dataset.view)));
