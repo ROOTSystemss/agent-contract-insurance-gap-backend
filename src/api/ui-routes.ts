@@ -6,6 +6,7 @@ const assets = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
+  "/floor3.css": { file: "floor3.css", type: "text/css; charset=utf-8" },
   "/favicon.svg": { file: "favicon.svg", type: "image/svg+xml" },
   "/oauth/authorize": { file: "authorize.html", type: "text/html; charset=utf-8" },
   "/authorize.js": { file: "authorize.js", type: "text/javascript; charset=utf-8" },

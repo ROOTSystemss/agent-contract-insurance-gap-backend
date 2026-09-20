@@ -15,6 +15,7 @@ const state = {
   report: null,
   view: "overview",
   authMode: "register",
+  handoff: null,
 };
 
 const icon = (name) => {
@@ -52,6 +53,96 @@ const initials = (value = "") =>
     .join("")
     .toUpperCase() || "RS";
 const formDataObject = (form) => Object.fromEntries(new FormData(form).entries());
+
+// ---- Floor 3 handoff from AI Compliance Readiness -------------------------
+// Arrives as URL parameters, so it is untrusted input: every value is
+// validated/clamped here and only ever written to the DOM via .value or
+// textContent, never innerHTML. It only pre-fills a form the user must confirm.
+const HANDOFF_KEY = "floor3Handoff";
+const HANDOFF_BANDS = ["NOT_READY", "DEVELOPING", "SUBSTANTIALLY_READY"];
+const cleanText = (value, max) =>
+  String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+const cleanInt = (value, max) => {
+  const number = Number.parseInt(value, 10);
+  return Number.isFinite(number) && number >= 0 ? Math.min(number, max) : null;
+};
+function captureHandoff() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("handoff") !== "readiness") return;
+    const subject = cleanText(params.get("subject"), 120);
+    if (subject.length >= 2) {
+      const band = params.get("band");
+      sessionStorage.setItem(
+        HANDOFF_KEY,
+        JSON.stringify({
+          source: "AI Compliance Readiness",
+          subject,
+          band: HANDOFF_BANDS.includes(band) ? band : null,
+          score: cleanInt(params.get("score"), 100),
+          critical: cleanInt(params.get("critical"), 999),
+          ref: cleanText(params.get("ref"), 40) || null,
+        }),
+      );
+    }
+    window.history.replaceState(null, "", window.location.pathname);
+  } catch {
+    /* storage or history unavailable: the handoff is simply skipped */
+  }
+}
+function loadHandoff() {
+  try {
+    return JSON.parse(sessionStorage.getItem(HANDOFF_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+function clearHandoff() {
+  state.handoff = null;
+  try {
+    sessionStorage.removeItem(HANDOFF_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+function handoffPrefill(handoff) {
+  const facts = [];
+  if (handoff.band) facts.push(`readiness band ${pretty(handoff.band)}`);
+  if (handoff.score !== null) facts.push(`score ${handoff.score}/100`);
+  if (handoff.critical !== null)
+    facts.push(`${handoff.critical} critical gap${handoff.critical === 1 ? "" : "s"}`);
+  return {
+    name: `Coverage check: ${handoff.subject}`.slice(0, 120),
+    description:
+      `Started from an AI Compliance Readiness assessment of "${handoff.subject}"` +
+      (facts.length ? ` (${facts.join(", ")}; self-reported, not verified here)` : "") +
+      ". Review whether contracts and insurance actually cover the authority this AI system has.",
+  };
+}
+
+// ---- Floor 3 journey indicator (Readiness -> Contract Gap -> Trust Proof) ----
+function flowStrip(current, { reportReady = false } = {}) {
+  const steps = [
+    ["AI Compliance Readiness", "Flag readiness gaps", "1"],
+    ["Agent Contract Gap", "Check contracts and insurance", "2"],
+    ["Trust Proof", "Sign the decision", "3"],
+  ];
+  const stateFor = (index) =>
+    index + 1 < current ? "done" : index + 1 === current ? "current" : "upcoming";
+  return `<nav class="f3-flow" aria-label="Floor 3 journey"><span class="f3-flow__label">AI Governance journey</span><ol>${steps
+    .map(([name, note, number], index) => {
+      const status = stateFor(index);
+      const soon = index === 2 ? '<em class="f3-flow__soon">Coming soon</em>' : "";
+      return `<li class="f3-flow__step f3-flow__step--${status}"${status === "current" ? ' aria-current="step"' : ""}><span class="f3-flow__num">${status === "done" ? "✓" : number}</span><span class="f3-flow__copy"><strong>${name}</strong><small>${note}</small></span>${soon}</li>`;
+    })
+    .join("")}</ol></nav>`;
+}
+
+function handoffBanner() {
+  const handoff = state.handoff;
+  if (!handoff) return "";
+  return `<div class="f3-handoff" role="status"><div><span class="eyebrow">From ${escapeHtml(handoff.source)}</span><strong>${escapeHtml(handoff.subject)}</strong><p>Context carried over: ${handoff.band ? escapeHtml(pretty(handoff.band)) : "no band"}${handoff.score !== null ? ` · ${handoff.score}/100` : ""}${handoff.critical !== null ? ` · ${handoff.critical} critical gap${handoff.critical === 1 ? "" : "s"}` : ""}. Unverified summary; nothing else was transferred.</p></div><div class="header-actions"><button class="button button-primary" data-handoff-start>Start this review</button><button class="button button-ghost" data-handoff-dismiss>Dismiss</button></div></div>`;
+}
 
 function toast(message, type = "success") {
   const element = document.createElement("div");
@@ -162,7 +253,7 @@ function shell(content) {
   ];
   app.innerHTML = `<div class="workspace">
     <aside class="sidebar">
-      <div class="brand"><i class="brand-mark"></i><span>Root Systems</span></div><div class="product-tag">Authority Atlas</div>
+      <div class="brand"><i class="brand-mark"></i><span>Root Systems</span></div><div class="product-tag">Agent Contract Gap</div>
       <div class="nav-group-label">Review workspace</div>
       <nav aria-label="Main navigation">${nav.map(([view, label, ico]) => `<button class="nav-button ${state.view === view ? "active" : ""}" data-view="${view}">${icon(ico)}<span>${label}</span></button>`).join("")}</nav>
       <div class="sidebar-spacer"></div>
@@ -247,7 +338,9 @@ async function initialize() {
       state.projects.find((project) => project.id === savedId) || state.projects[0] || null;
     if (state.project) await loadProjectResources();
     state.view = "overview";
+    state.handoff = loadHandoff();
     renderOverview();
+    if (state.handoff) openProjectModal(handoffPrefill(state.handoff));
   } catch {
     logout(false);
   }
@@ -274,7 +367,7 @@ function renderOverview() {
   ).length;
   const latestScore = state.analyses.find((analysis) => analysis.attentionScore)?.attentionScore
     ?.score;
-  shell(`${pageHeader("Review portfolio", "Authority workspace", "Create a review, describe the agent, add governing documents, and generate evidence-linked attention findings.", `${state.project ? '<button class="button button-secondary" data-project-settings>Review settings</button>' : ""}<button class="button button-primary" data-new-project>+ New review</button>`)}
+  shell(`${flowStrip(2)}${handoffBanner()}${pageHeader("Review portfolio", "Authority workspace", "Create a review, describe the agent, add governing documents, and generate evidence-linked attention findings.", `${state.project ? '<button class="button button-secondary" data-project-settings>Review settings</button>' : ""}<button class="button button-primary" data-new-project>+ New review</button>`)}
     <div class="grid grid-3">
       <div class="card card-pad metric"><div class="metric-label">Active reviews</div><div class="metric-value">${state.projects.length}</div><div class="metric-detail">Across ${escapeHtml(state.me.organization.name)}</div></div>
       <div class="card card-pad metric"><div class="metric-label">Evidence documents</div><div class="metric-value">${state.documents.length}</div><div class="metric-detail">Contract and insurance sources</div></div>
@@ -284,6 +377,11 @@ function renderOverview() {
       <div class="section-head"><div><h2>Your reviews</h2><p>Select a workspace or start a new authority review.</p></div></div>
       ${state.projects.length ? `<div class="project-list">${state.projects.map((project) => `<button class="project-row" data-project-id="${project.id}"><span class="project-badge">${escapeHtml(project.primaryCountryCode)}</span><span><strong>${escapeHtml(project.name)}</strong><span>${escapeHtml(project.description || "No description")} · ${escapeHtml(project.primaryCountryCode)}${project.primarySubdivisionCode ? ` / ${escapeHtml(project.primarySubdivisionCode)}` : ""}</span></span><span class="chevron">→</span></button>`).join("")}</div>` : `<div class="empty-state"><div class="empty-icon">⌁</div><h3>Start your first authority review</h3><p>Create a project for one AI agent and the contracts or insurance materials you want to compare.</p><button class="button button-primary" data-new-project>Create first review</button></div>`}
     </div>`);
+  document.querySelector("[data-handoff-start]")?.addEventListener("click", () => openProjectModal(handoffPrefill(state.handoff)));
+  document.querySelector("[data-handoff-dismiss]")?.addEventListener("click", () => {
+    clearHandoff();
+    renderOverview();
+  });
   document
     .querySelectorAll("[data-new-project]")
     .forEach((button) => button.addEventListener("click", openProjectModal));
@@ -373,7 +471,7 @@ function openProjectSettingsModal() {
   });
 }
 
-function openProjectModal() {
+function openProjectModal(prefill = {}) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
   backdrop.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
@@ -387,6 +485,8 @@ function openProjectModal() {
       <div class="field full"><p id="project-message" class="form-message"></p><div class="form-actions"><button type="button" class="button button-secondary" data-close-modal>Cancel</button><button type="submit" class="button button-primary">Create review →</button></div></div>
     </form></div>`;
   document.body.append(backdrop);
+  if (prefill.name) backdrop.querySelector("#project-name").value = prefill.name;
+  if (prefill.description) backdrop.querySelector("#project-description").value = prefill.description;
   backdrop
     .querySelectorAll("[data-close-modal]")
     .forEach((button) => button.addEventListener("click", () => backdrop.remove()));
@@ -415,6 +515,7 @@ function openProjectModal() {
       state.documents = [];
       state.analyses = [];
       sessionStorage.setItem("authorityAtlasProject", state.project.id);
+      if (prefill.name && state.handoff) clearHandoff();
       backdrop.remove();
       toast("Review created. Now describe the agent.");
       navigate("agent");
@@ -739,7 +840,7 @@ function renderAnalysis() {
     );
     return;
   }
-  shell(`${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-download-pdf>Download PDF</button><button class="button button-secondary" data-print-report>Print</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
+  shell(`${flowStrip(2, { reportReady: Boolean(report) })}${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-download-pdf>Download PDF</button><button class="button button-secondary" data-print-report>Print</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step done"></i><i class="progress-step done"></i></div>
     ${
       report
@@ -750,6 +851,14 @@ function renderAnalysis() {
   document.querySelector("[data-run-analysis]")?.addEventListener("click", runAnalysis);
   document.querySelector("[data-rerun]")?.addEventListener("click", runAnalysis);
   document.querySelector("[data-print-report]")?.addEventListener("click", () => window.print());
+  document.querySelector("[data-copy-decision]")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(decisionSummaryText(state.report));
+      toast("Decision summary copied.");
+    } catch {
+      toast("Copy is not available in this browser.", "error");
+    }
+  });
   document.querySelector("[data-download-report]")?.addEventListener("click", downloadReport);
   document.querySelector("[data-download-pdf]")?.addEventListener("click", downloadPdfReport);
   document.querySelectorAll("[data-finding-status]").forEach((select) =>
@@ -772,6 +881,27 @@ function renderAnalysis() {
   );
 }
 
+const SEVERITY_ORDER = ["critical", "high", "moderate", "low", "informational"];
+function decisionSummaryText(report) {
+  const findings = Object.values(report.findingsBySeverity || {}).flat();
+  const counts = SEVERITY_ORDER.map((severity) => [severity, findings.filter((f) => f.severity === severity).length]).filter(([, n]) => n > 0);
+  return [
+    `Agent Contract Gap review: ${state.project?.name || "review"}`,
+    `Agent: ${report.agentSummary.name}`,
+    `Attention score: ${report.overallAttentionScore ?? "n/a"}/100`,
+    `Findings: ${counts.map(([severity, n]) => `${n} ${severity}`).join(", ") || "none"}`,
+    `Generated: ${new Date().toISOString()}`,
+    "Decision (accept the risk / require an insurance update / restrict the agent's authority): ________",
+    "Decided by: ________",
+  ].join("\n");
+}
+function signoffCard(report) {
+  const findings = Object.values(report.findingsBySeverity || {}).flat();
+  const worst = SEVERITY_ORDER.find((severity) => findings.some((f) => f.severity === severity));
+  const needsDecision = findings.filter((f) => ["critical", "high", "moderate"].includes(f.severity)).length;
+  return `<div class="card f3-signoff" style="margin-top:18px"><span class="badge badge-gray">Coming soon</span><h2>Sign the decision in Trust Proof</h2><p>${needsDecision ? `${needsDecision} finding${needsDecision === 1 ? "" : "s"} at moderate severity or above${worst ? ` (highest: ${pretty(worst)})` : ""} need a named owner's call: accept the risk, require an insurance update, or restrict the agent's authority.` : "No moderate-or-higher findings need a decision right now."}</p><p class="small muted">Trust Proof will record who made that call and when, in a way anyone can verify independently. It does not have a sign-off screen yet, so nothing is submitted from here. Until then, keep your decision in your own records.</p><button class="button button-secondary" data-copy-decision>Copy decision summary</button></div>`;
+}
+
 function reportView(report) {
   const findings = Object.values(report.findingsBySeverity || {}).flat();
   return `<div class="card card-pad"><div class="score-layout"><div class="score-ring" style="--score:${report.overallAttentionScore || 0}"><div class="score-center"><strong>${report.overallAttentionScore ?? "—"}</strong><span>ATTENTION / 100</span></div></div><div><span class="badge ${report.overallAttentionScore >= 70 ? "badge-red" : report.overallAttentionScore >= 40 ? "badge-orange" : "badge-green"}">${pretty(report.attentionLabel || "not scored")}</span><h2 style="font-family:Georgia,serif;font-size:1.8rem;font-weight:500;margin:12px 0 7px">${findings.length} review item${findings.length === 1 ? "" : "s"} identified</h2><p class="muted" style="line-height:1.6">${escapeHtml(report.executiveSummary)}</p></div></div></div>
@@ -790,7 +920,7 @@ function reportView(report) {
               .map((question) => `<li>${escapeHtml(question)}</li>`)
               .join("")}</ul>`
           : "<p>No insurance-specific questions generated.</p>"
-      }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div></aside></div>
+      }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div>${signoffCard(report)}</aside></div>
     <div class="disclaimer">${escapeHtml(report.disclaimer)}</div>`;
 }
 
@@ -906,5 +1036,6 @@ function renderActivity() {
   });
 }
 
+captureHandoff();
 if (state.token) initialize();
 else authView();
