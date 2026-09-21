@@ -8,6 +8,9 @@ const assets = {
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
   "/floor3.css": { file: "floor3.css", type: "text/css; charset=utf-8" },
   "/favicon.svg": { file: "favicon.svg", type: "image/svg+xml" },
+  "/favicon-64.png": { file: "favicon-64.png", type: "image/png" },
+  "/apple-touch-icon.png": { file: "apple-touch-icon.png", type: "image/png" },
+  "/rs-mark-cream.png": { file: "rs-mark-cream.png", type: "image/png" },
   "/oauth/authorize": { file: "authorize.html", type: "text/html; charset=utf-8" },
   "/authorize.js": { file: "authorize.js", type: "text/javascript; charset=utf-8" },
 } as const;

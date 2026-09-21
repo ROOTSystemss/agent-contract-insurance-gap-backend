@@ -174,10 +174,10 @@ function authView() {
     <main class="auth-page">
       <section class="auth-story">
         <div>
-          <div class="brand"><i class="brand-mark"></i><span>RootSystems</span></div>
+          <div class="brand"><img class="brand-mark-img" src="/rs-mark-cream.png" alt="" width="32" height="32"><span>RootSystems</span></div>
         </div>
         <div class="story-copy">
-          <span class="eyebrow">Authority Atlas</span>
+          <span class="eyebrow">Agent Contract Gap</span>
           <h1>Know where your agent's <em>authority</em> outruns the paperwork.</h1>
           <p>Map AI-agent capabilities against contracts and insurance evidence with a deterministic, review-ready workflow.</p>
           <div class="trust-row"><span>Evidence linked</span><span>Deterministic by default</span><span>Built for expert review</span></div>
@@ -253,7 +253,7 @@ function shell(content) {
   ];
   app.innerHTML = `<div class="workspace">
     <aside class="sidebar">
-      <div class="brand"><i class="brand-mark"></i><span>RootSystems</span></div><div class="product-tag">Agent Contract Gap</div>
+      <div class="brand"><img class="brand-mark-img" src="/rs-mark-cream.png" alt="" width="32" height="32"><span>RootSystems</span></div><div class="product-tag">Agent Contract Gap</div>
       <div class="nav-group-label">Review workspace</div>
       <nav aria-label="Main navigation">${nav.map(([view, label, ico]) => `<button class="nav-button ${state.view === view ? "active" : ""}" data-view="${view}">${icon(ico)}<span>${label}</span></button>`).join("")}</nav>
       <div class="sidebar-spacer"></div>

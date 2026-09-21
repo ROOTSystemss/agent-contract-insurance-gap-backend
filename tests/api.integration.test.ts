@@ -88,7 +88,7 @@ describe("API integration", () => {
     const productUi = await app.inject({ method: "GET", url: "/" });
     expect(productUi.statusCode).toBe(200);
     expect(productUi.headers["content-type"]).toContain("text/html");
-    expect(productUi.body).toContain("Authority Atlas");
+    expect(productUi.body).toContain("Agent Contract Gap");
     expect(productUi.headers["content-security-policy"]).toContain("default-src 'self'");
     expect(productUi.headers["x-content-type-options"]).toBe("nosniff");
     expect((await app.inject({ method: "GET", url: "/styles.css" })).statusCode).toBe(200);
