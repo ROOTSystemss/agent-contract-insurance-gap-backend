@@ -49,7 +49,7 @@ function loginView() {
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-story">
-        <div><div class="brand"><i class="brand-mark"></i><span>Root Systems</span></div></div>
+        <div><div class="brand"><i class="brand-mark"></i><span>RootSystems</span></div></div>
         <div class="story-copy">
           <span class="eyebrow">Authority Atlas</span>
           <h1>Sign in to continue to <em>AI Compliance Readiness</em>.</h1>

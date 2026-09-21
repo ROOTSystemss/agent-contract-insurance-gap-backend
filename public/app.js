@@ -174,7 +174,7 @@ function authView() {
     <main class="auth-page">
       <section class="auth-story">
         <div>
-          <div class="brand"><i class="brand-mark"></i><span>Root Systems</span></div>
+          <div class="brand"><i class="brand-mark"></i><span>RootSystems</span></div>
         </div>
         <div class="story-copy">
           <span class="eyebrow">Authority Atlas</span>
@@ -253,7 +253,7 @@ function shell(content) {
   ];
   app.innerHTML = `<div class="workspace">
     <aside class="sidebar">
-      <div class="brand"><i class="brand-mark"></i><span>Root Systems</span></div><div class="product-tag">Agent Contract Gap</div>
+      <div class="brand"><i class="brand-mark"></i><span>RootSystems</span></div><div class="product-tag">Agent Contract Gap</div>
       <div class="nav-group-label">Review workspace</div>
       <nav aria-label="Main navigation">${nav.map(([view, label, ico]) => `<button class="nav-button ${state.view === view ? "active" : ""}" data-view="${view}">${icon(ico)}<span>${label}</span></button>`).join("")}</nav>
       <div class="sidebar-spacer"></div>
