@@ -23,7 +23,7 @@ export async function generateReportPdf(report: GeneratedReport): Promise<Buffer
       bufferPages: true,
       info: {
         Title: `${report.projectSummary.name} — Authority review`,
-        Author: "Root Systems Authority Atlas",
+        Author: "RootSystems Agent Contract Gap",
         Subject: "AI-agent contract and insurance attention report",
       },
     });
@@ -37,7 +37,7 @@ export async function generateReportPdf(report: GeneratedReport): Promise<Buffer
       .fillColor(colors.orange)
       .font("Helvetica-Bold")
       .fontSize(9)
-      .text("ROOT SYSTEMS  /  AUTHORITY ATLAS", 54, 48, { characterSpacing: 1.2 });
+      .text("RootSystems  /  AGENT CONTRACT GAP", 54, 48, { characterSpacing: 1.2 });
     document
       .fillColor(colors.ink)
       .font("Helvetica-Bold")
@@ -151,7 +151,7 @@ export async function generateReportPdf(report: GeneratedReport): Promise<Buffer
         .fillColor("#8A939E")
         .font("Helvetica")
         .fontSize(7)
-        .text(`Authority Atlas  •  Page ${index + 1} of ${pageRange.count}`, 54, 742, {
+        .text(`Agent Contract Gap  •  Page ${index + 1} of ${pageRange.count}`, 54, 742, {
           width: 504,
           align: "right",
         });

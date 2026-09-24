@@ -61,7 +61,7 @@ Set a long random `JWT_SECRET` and keep `PERSISTENCE_DRIVER=memory`, then:
 npm run dev
 ```
 
-Open `http://127.0.0.1:4400/` for the Authority Atlas product interface. The frontend is served by the same Fastify process, so it has no separate runtime or framework dependency. API documentation remains available at `http://127.0.0.1:4400/docs`.
+Open `http://127.0.0.1:4400/` for the Agent Contract Gap product interface. The frontend is served by the same Fastify process, so it has no separate runtime or framework dependency. API documentation remains available at `http://127.0.0.1:4400/docs`.
 
 The interface supports registration and login, project creation, agent authority profiling, PDF/DOCX/TXT upload, deterministic analysis, and review-ready findings. Memory mode is for evaluation and tests; data is lost when the process stops.
 
