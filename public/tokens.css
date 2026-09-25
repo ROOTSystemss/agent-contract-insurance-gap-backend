@@ -1,0 +1,22 @@
+:root {
+  --accent: #6A4FB6;
+  --accent-deep: #533C93;
+  --accent-tint: #F0ECFA;
+  --btn-primary-text: #FFFFFF;
+  --navy: #0A1F44;
+  --ink: #0F1B2E;
+  --muted: #48566E;
+  --faint: #8A97AC;
+  --bg-page: #F6F8FC;
+  --card-white: #FFFFFF;
+  --border: #DFE5F0;
+  --status-good: #1E9E45;
+  --status-warning: #B9740E;
+  --status-critical: #C0392B;
+  --status-info: #1C8FC9;
+  --btn-radius: 10px;
+  --btn-height: 40px;
+  --btn-height-sm: 34px;
+  --card-radius: 16px;
+  --card-shadow: 0 1px 2px rgba(10,31,68,.05), 0 8px 24px rgba(10,31,68,.06);
+}
