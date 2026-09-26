@@ -20,4 +20,5 @@ COPY public ./public
 RUN mkdir -p /app/uploads && chown -R app:app /app
 USER app
 EXPOSE 4400
-CMD ["node", "dist/server.js"]
+# Apply pending database migrations, then start. Render runs this image; the database is empty on first deploy.
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
