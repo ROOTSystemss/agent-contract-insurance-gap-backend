@@ -10,6 +10,7 @@ import swaggerUi from "@fastify/swagger-ui";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { auditRoutes } from "./api/audit-routes.js";
+import { createAtlasVerifier, type CertificateVerifier } from "./authority/certificate.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
 import { authRoutes } from "./api/auth-routes.js";
@@ -42,6 +43,8 @@ export interface BuildAppOptions {
   store?: Store;
   storage?: DocumentStorage;
   logger?: boolean;
+  // Tests inject a verifier; production builds one from AUTHORITY_ATLAS_URL.
+  certificateVerifier?: CertificateVerifier | null;
 }
 
 function isAllowedOrigin(request: FastifyRequest, configuredOrigins: string[]): boolean {
@@ -95,6 +98,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.decorate("documentService", documentService);
   const oauthCodes = new OAuthCodeStore(config.ATLAS_OAUTH_CODE_TTL_MS);
   app.decorate("oauthCodes", oauthCodes);
+  app.decorate(
+    "certificateVerifier",
+    options.certificateVerifier !== undefined
+      ? options.certificateVerifier
+      : config.AUTHORITY_ATLAS_URL
+        ? createAtlasVerifier(new URL(config.AUTHORITY_ATLAS_URL).origin)
+        : null,
+  );
   app.decorateRequest("actor", null);
 
   await app.register(helmet, {

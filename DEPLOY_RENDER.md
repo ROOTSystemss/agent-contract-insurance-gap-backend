@@ -16,5 +16,13 @@ Required environment variables (production refuses to start without them):
 | `ATLAS_OAUTH_REDIRECT_URIS` | `https://ai-compliance-readiness.onrender.com/auth/atlas/callback` (https only) |
 | `CORS_ORIGINS` | the site origins allowed to call the API, comma-separated |
 | `TRUST_PROXY` | `true` |
+| `AUTHORITY_ATLAS_URL` | optional: the Authority Atlas base URL (https, no path), e.g. `https://authority-atlas.onrender.com`. Enables the certificate checks below; without it they answer 503. |
 
 Uploaded documents live on the container disk, which is ephemeral on Render's free plan; they are deleted after `DOCUMENT_RETENTION_DAYS` (default 30) anyway, and structured data lives in Postgres.
+
+## Agent authority certificate checks
+Contract Gap compares an agent's declared profile with a signed authority certificate issued by Authority Atlas, because a profile that understates what the certificate authorizes makes the gap analysis under-report risk.
+- POST /api/v1/agents/:id/certificate-check {certificate}: read-only. Returns the differences (high: profile understates the certificate or has a lower spending limit; moderate: profile declares something no certificate covers).
+- POST /api/v1/agents/:id/adopt-certificate {certificate}: escalation only. Turns capabilities on and raises the limit to match the certificate; never turns anything off or lowers a limit. Refuses (422) to add spending authority when no limit is available.
+- The certificate is always verified live with Atlas (signature, expiry, revocation). Any failure to verify stops the request: 422 for an invalid certificate, 503 when Atlas is unreachable or not configured.
+- Tests: tests/certificate.test.ts (33 checks) and, against a real Atlas, ATLAS_DIR=<atlas checkout> node scripts/certificate-e2e.mjs (11 checks; run npm run build first).

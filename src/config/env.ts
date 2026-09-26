@@ -49,6 +49,9 @@ const envSchema = z
       .default("development-only-oauth-secret-change-before-production"),
     ATLAS_OAUTH_REDIRECT_URIS: z.string().default("http://localhost:4605/auth/atlas/callback"),
     ATLAS_OAUTH_CODE_TTL_MS: z.coerce.number().int().min(15_000).max(300_000).default(60_000),
+    // Base URL of the Authority Atlas service that issues and verifies agent authority certificates
+    // (not this app's own sign-in bridge above). Optional: without it, certificate checks answer 503.
+    AUTHORITY_ATLAS_URL: z.string().url().optional(),
   })
   .superRefine((env, context) => {
     if (env.NODE_ENV === "production") {
@@ -83,6 +86,13 @@ const envSchema = z
           path: ["ATLAS_OAUTH_CLIENT_SECRET"],
           message:
             "Production ATLAS_OAUTH_CLIENT_SECRET must be at least 32 characters and must not be a placeholder.",
+        });
+      }
+      if (env.AUTHORITY_ATLAS_URL && !env.AUTHORITY_ATLAS_URL.startsWith("https://")) {
+        context.addIssue({
+          code: "custom",
+          path: ["AUTHORITY_ATLAS_URL"],
+          message: "Production AUTHORITY_ATLAS_URL must be https://.",
         });
       }
       for (const uri of env.ATLAS_OAUTH_REDIRECT_URIS.split(",").map((value) => value.trim())) {

@@ -3,9 +3,34 @@ import { z } from "zod";
 import { notFound } from "../shared/errors.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 import { agentProfileSchema } from "./schemas.js";
+import {
+  escalationPatch,
+  reconcile,
+  type CertificateSummary,
+  type CertificateVerifier,
+} from "../authority/certificate.js";
+import { AppError } from "../shared/errors.js";
 
 const projectParams = z.object({ projectId: z.string().uuid() });
 const agentParams = z.object({ id: z.string().uuid() });
+const certificateBody = z.object({ certificate: z.string().min(20).max(8000) });
+
+// Verifies a certificate with Authority Atlas. Anything other than a confirmed-valid certificate
+// stops the request: an unverifiable certificate must never influence a risk analysis.
+async function verifiedCertificate(
+  verifier: CertificateVerifier | null,
+  certificate: string,
+): Promise<CertificateSummary> {
+  if (!verifier) {
+    throw new AppError(503, "CERTIFICATE_VERIFIER_NOT_CONFIGURED", "Certificate checks are not configured on this server.");
+  }
+  const result = await verifier(certificate);
+  if (result.ok) return result.certificate;
+  if (result.reason === "verifier_unavailable") {
+    throw new AppError(503, "CERTIFICATE_VERIFIER_UNAVAILABLE", "The certificate could not be verified right now. Try again.");
+  }
+  throw new AppError(422, "CERTIFICATE_NOT_VALID", "The certificate is not valid: " + result.reason + ".");
+}
 
 export const projectAgentRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.authenticate);
@@ -44,6 +69,46 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const agent = await app.store.getAgent(actor(request).organizationId, id);
     if (!agent) throw notFound("Agent profile");
     return success(request, agent);
+  });
+
+  // Compares the agent's declared profile with what a signed authority certificate authorizes.
+  // Read-only: reports differences, changes nothing.
+  app.post("/:id/certificate-check", async (request) => {
+    requireRole(request, "analyst");
+    const { id } = agentParams.parse(request.params);
+    const { certificate } = certificateBody.parse(request.body);
+    const agent = await app.store.getAgent(actor(request).organizationId, id);
+    if (!agent) throw notFound("Agent profile");
+    const summary = await verifiedCertificate(app.certificateVerifier, certificate);
+    const result = reconcile(agent, summary);
+    await audit(app.store, request, "agent_profile", agent.id, "agent_profile.certificate_check", {
+      projectId: agent.projectId,
+      differences: result.differences.length,
+      profileCoversCertificate: result.profileCoversCertificate,
+    });
+    return success(request, result);
+  });
+
+  // Brings an under-stated profile up to what its certificate authorizes. Escalation only.
+  app.post("/:id/adopt-certificate", async (request) => {
+    requireRole(request, "analyst");
+    const { id } = agentParams.parse(request.params);
+    const { certificate } = certificateBody.parse(request.body);
+    const agent = await app.store.getAgent(actor(request).organizationId, id);
+    if (!agent) throw notFound("Agent profile");
+    const summary = await verifiedCertificate(app.certificateVerifier, certificate);
+    const escalation = escalationPatch(agent, summary);
+    if ("error" in escalation) throw new AppError(422, "CERTIFICATE_CANNOT_BE_ADOPTED", escalation.error);
+    if (escalation.changed.length === 0) {
+      return success(request, { changed: [], agent, note: "The profile already covers this certificate." });
+    }
+    const updated = await app.store.updateAgent(actor(request).organizationId, id, escalation.patch);
+    if (!updated) throw notFound("Agent profile");
+    await audit(app.store, request, "agent_profile", agent.id, "agent_profile.adopt_certificate", {
+      projectId: agent.projectId,
+      changed: escalation.changed.join(","),
+    });
+    return success(request, { changed: escalation.changed, agent: updated });
   });
 
   app.patch("/:id", async (request) => {

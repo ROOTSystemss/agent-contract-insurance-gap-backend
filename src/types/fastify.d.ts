@@ -3,12 +3,15 @@ import type { AuthenticatedActor } from "../domain/types.js";
 import type { DocumentService } from "../documents/document-service.js";
 import type { Store } from "../persistence/store.js";
 import type { OAuthCodeStore } from "../security/oauth-code-store.js";
+import type { CertificateVerifier } from "../authority/certificate.js";
 
 declare module "fastify" {
   interface FastifyInstance {
     store: Store;
     documentService: DocumentService;
     oauthCodes: OAuthCodeStore;
+    // null when AUTHORITY_ATLAS_URL is not configured
+    certificateVerifier: CertificateVerifier | null;
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {
