@@ -1,4 +1,5 @@
 import type { AgentProfile, AgentProfileInput } from "../domain/types.js";
+import { AppError } from "../shared/errors.js";
 
 // Reconciles an Authority Atlas agent authority certificate (a signed statement of what an
 // organization authorized an AI agent to do) with the agent profile that drives the gap analysis.
@@ -23,6 +24,23 @@ export type VerifyResult =
   | { ok: false; reason: string };
 
 export type CertificateVerifier = (certificate: string) => Promise<VerifyResult>;
+
+// Verifies a certificate with Authority Atlas. Anything other than a confirmed-valid certificate
+// stops the request: an unverifiable certificate must never influence a risk analysis.
+export async function requireVerifiedCertificate(
+  verifier: CertificateVerifier | null,
+  certificate: string,
+): Promise<CertificateSummary> {
+  if (!verifier) {
+    throw new AppError(503, "CERTIFICATE_VERIFIER_NOT_CONFIGURED", "Certificate checks are not configured on this server.");
+  }
+  const result = await verifier(certificate);
+  if (result.ok) return result.certificate;
+  if (result.reason === "verifier_unavailable") {
+    throw new AppError(503, "CERTIFICATE_VERIFIER_UNAVAILABLE", "The certificate could not be verified right now. Try again.");
+  }
+  throw new AppError(422, "CERTIFICATE_NOT_VALID", "The certificate is not valid: " + result.reason + ".");
+}
 
 // Asks Authority Atlas (GET /agents/verify) whether a certificate is genuine, unexpired and not
 // revoked. Fails closed: any problem reaching or understanding Atlas is "verifier_unavailable".

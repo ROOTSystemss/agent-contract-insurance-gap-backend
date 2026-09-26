@@ -2,8 +2,11 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AnalysisService } from "../analysis/analysis-service.js";
 import { ReportService } from "../reports/report-service.js";
+import { buildAssurancePack, verifyAssurancePack } from "../reports/assurance-pack.js";
+import { reconcile, requireVerifiedCertificate } from "../authority/certificate.js";
+import type { DocumentRecord, Finding } from "../domain/types.js";
 import { generateReportPdf } from "../reports/pdf-report.js";
-import { notFound } from "../shared/errors.js";
+import { AppError, notFound } from "../shared/errors.js";
 import { actor, audit, paginatedMeta, pagination, requireRole, success } from "./helpers.js";
 import { analysisCreateSchema } from "./schemas.js";
 
@@ -80,6 +83,67 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
       projectId: report.projectSummary.id,
     });
     return success(request, report);
+  });
+
+  // Builds the fingerprinted Agent Assurance Pack for one finished analysis. With a certificate in
+  // the body, the pack also states whether the agent's profile covers what its signed authority
+  // certificate allows (the certificate is verified live with Authority Atlas first).
+  app.post("/:id/assurance-pack", async (request) => {
+    requireRole(request, "analyst");
+    const { id } = analysisParams.parse(request.params);
+    const { certificate } = z
+      .object({ certificate: z.string().min(20).max(8000).optional() })
+      .parse(request.body ?? {});
+    const orgId = actor(request).organizationId;
+    const analysis = await app.store.getAnalysis(orgId, id);
+    if (!analysis) throw notFound("Analysis");
+    // A finished analysis may carry warnings; they are included in the pack rather than blocking it.
+    if (analysis.state !== "completed" && analysis.state !== "completed_with_warnings") {
+      throw new AppError(409, "ANALYSIS_NOT_COMPLETED", "The analysis must be completed before an assurance pack can be built.");
+    }
+    const project = await app.store.getProject(orgId, analysis.projectId);
+    const agent = await app.store.getAgent(orgId, analysis.agentProfileId);
+    if (!project || !agent) throw notFound("Analysis dependency");
+    const organization = await app.store.getOrganization(orgId);
+
+    const findings: Finding[] = [];
+    for (let page = 1; ; page++) {
+      const result = await app.store.listFindings(orgId, id, { page, pageSize: 100 });
+      findings.push(...result.items);
+      if (findings.length >= result.total || result.items.length === 0) break;
+    }
+    const documents: DocumentRecord[] = [];
+    for (const documentId of analysis.documentIds) {
+      const document = await app.store.getDocument(orgId, documentId);
+      if (document) documents.push(document);
+    }
+    const reconciliation = certificate
+      ? reconcile(agent, await requireVerifiedCertificate(app.certificateVerifier, certificate))
+      : null;
+
+    const built = buildAssurancePack({
+      organizationName: organization?.name ?? "Unknown organization",
+      projectName: project.name,
+      agent,
+      analysis,
+      findings,
+      documents,
+      certificate: reconciliation,
+    });
+    await audit(app.store, request, "analysis", id, "assurance_pack.generate", {
+      projectId: analysis.projectId,
+      contentHash: built.contentHash,
+      withCertificate: reconciliation !== null,
+    });
+    return success(request, built);
+  });
+
+  // Recomputes a pack's fingerprint. Proves the pack is unchanged since it was built.
+  app.post("/assurance-pack/verify", async (request) => {
+    const body = z
+      .object({ pack: z.record(z.string(), z.unknown()), contentHash: z.string().regex(/^[0-9a-fA-F]{64}$/) })
+      .parse(request.body);
+    return success(request, verifyAssurancePack(body.pack, body.contentHash));
   });
 
   app.get("/:id/report.pdf", async (request, reply) => {

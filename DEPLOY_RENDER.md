@@ -26,3 +26,11 @@ Contract Gap compares an agent's declared profile with a signed authority certif
 - POST /api/v1/agents/:id/adopt-certificate {certificate}: escalation only. Turns capabilities on and raises the limit to match the certificate; never turns anything off or lowers a limit. Refuses (422) to add spending authority when no limit is available.
 - The certificate is always verified live with Atlas (signature, expiry, revocation). Any failure to verify stops the request: 422 for an invalid certificate, 503 when Atlas is unreachable or not configured.
 - Tests: tests/certificate.test.ts (33 checks) and, against a real Atlas, ATLAS_DIR=<atlas checkout> node scripts/certificate-e2e.mjs (11 checks; run npm run build first).
+
+## Agent Assurance Pack
+One fingerprinted summary of an agent's authority, the contract and insurance findings, and any verified authority certificate, for a broker, auditor, customer or lawyer.
+- POST /api/v1/analyses/:id/assurance-pack, optional body {certificate}. The analysis must be finished (completed or completed_with_warnings). Returns {pack, contentHash, hashAlgorithm, canonicalization}.
+- POST /api/v1/analyses/assurance-pack/verify {pack, contentHash} recomputes the fingerprint: proves the pack is unchanged since it was built (not that its contents are true).
+- Metadata only: no contract text, evidence excerpts or explanations; documents appear only as SHA-256 checksums.
+- To anchor it with named human sign-off, submit the hash to Trust Proof: POST /api/v1/decisions with content {"type":"agent-assurance-pack","contentHash":"<hash>"} and the people who must sign. It then joins that organization's tamper-evident chain.
+- Tests: tests/assurance-pack.test.ts (13 checks).
