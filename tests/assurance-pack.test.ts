@@ -131,6 +131,7 @@ describe("assurance pack API", () => {
     expect(response.statusCode).toBe(200);
     const built = body<{ data: { pack: { authorityCertificate: { verifiedWithAuthorityAtlas: boolean; profileCoversCertificate: boolean; differences: Array<{ capability: string | null }> } } } }>(response).data;
     expect(built.pack.authorityCertificate.verifiedWithAuthorityAtlas).toBe(true);
+    expect((built.pack.authorityCertificate as unknown as { issuerOrganizationVerified: boolean }).issuerOrganizationVerified).toBe(false);
     expect(built.pack.authorityCertificate.profileCoversCertificate).toBe(false);
     expect(built.pack.authorityCertificate.differences.some((d) => d.capability === "canEnterContracts")).toBe(true);
   });

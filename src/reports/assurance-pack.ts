@@ -112,6 +112,7 @@ export function buildAssurancePack(input: AssurancePackInput) {
           verifiedWithAuthorityAtlas: true,
           agentId: input.certificate.certificate.agentId,
           issuedBy: input.certificate.certificate.organization,
+          issuerOrganizationVerified: input.certificate.certificate.organizationVerified === true,
           permissions: input.certificate.certificate.permissions,
           limits: input.certificate.certificate.limits,
           issuedAt: input.certificate.certificate.issuedAt,
@@ -129,6 +130,7 @@ export function buildAssurancePack(input: AssurancePackInput) {
       "Automated informational review; not legal advice, insurance advice or a coverage opinion.",
       "Contains metadata only: no contract text, evidence excerpts or findings explanations.",
       "The agent profile and any amounts are declared by the organization, not independently observed.",
+      "An authority certificate proves that the holder of an Authority Atlas account claiming the named organization authorized the agent; the organization name is not independently verified.",
     ],
     disclaimer: CANONICAL_DISCLAIMER,
   };

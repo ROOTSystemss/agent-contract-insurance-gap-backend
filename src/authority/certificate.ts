@@ -13,6 +13,8 @@ export interface CertificateSummary {
   agentId: string;
   agentName: string;
   organization: string;
+  // Authority Atlas states that it does not verify organization names; absent means not verified.
+  organizationVerified?: boolean;
   permissions: string[];
   limits: { maxAmountUsd?: number; maxActionsPerDay?: number };
   issuedAt: string;
