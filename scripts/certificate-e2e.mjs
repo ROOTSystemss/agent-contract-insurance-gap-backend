@@ -3,6 +3,7 @@
 // it over real HTTP. No injected fakes.
 // Needs `npm run build` first and the Atlas repo (branch agent-authority): set ATLAS_DIR.
 // Run: ATLAS_DIR=<path> node scripts/certificate-e2e.mjs
+import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";

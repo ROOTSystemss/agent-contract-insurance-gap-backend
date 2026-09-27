@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Analysis, AgentProfile, DocumentRecord, Finding, Severity } from "../domain/types.js";
 import { ALL_CAPABILITIES, type Reconciliation } from "../authority/certificate.js";
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
+import { PQ_ALGORITHM, PQ_STANDARD, sha512Hex, verifyWithPublicKey, type PqSigner } from "../crypto/pq-sign.js";
 
 // The Agent Assurance Pack: one fingerprinted summary of "what this agent is authorized to do,
 // what the contracts and insurance say about it, and where the gaps are", for handing to a
@@ -11,9 +12,11 @@ import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
 // excerpts or the findings' explanations; documents appear only as their filename-free SHA-256
 // checksum, so a reader can confirm WHICH document versions were analyzed without seeing them.
 //
-// The pack has a contentHash (SHA-256 of its canonical JSON). Anchor it by submitting that hash
-// as a decision to Trust Proof (POST /api/v1/decisions), where named people sign it and it joins
-// a tamper-evident chain. This module only builds and checks the fingerprint.
+// The pack has a contentHash (SHA-256 of its canonical JSON) and a SHA-512 of the same bytes, and,
+// when PQ_SIGNING_SEED is set, an ML-DSA-65 signature (NIST FIPS 204, post-quantum) over them by
+// this service, so a holder can prove who issued it, not only that it is unchanged. Anchor it by
+// submitting the hash as a decision to Trust Proof (POST /api/v1/decisions), where named people sign
+// it and it joins a tamper-evident chain.
 
 export const ASSURANCE_PACK_SCHEMA = "rootsystems.agent-assurance-pack.v1";
 
@@ -44,7 +47,7 @@ export interface AssurancePackInput {
   now?: Date;
 }
 
-export function buildAssurancePack(input: AssurancePackInput) {
+export function buildAssurancePack(input: AssurancePackInput, signer: PqSigner | null = null) {
   const { agent, analysis, findings } = input;
   const counts: Record<string, number> = {};
   for (const severity of SEVERITIES) counts[severity] = findings.filter((f) => f.severity === severity).length;
@@ -135,17 +138,41 @@ export function buildAssurancePack(input: AssurancePackInput) {
     disclaimer: CANONICAL_DISCLAIMER,
   };
 
+  const bytes = Buffer.from(canonicalJson(pack), "utf8");
   return {
     pack,
     contentHash: hashPack(pack),
     hashAlgorithm: "sha256",
+    contentHashSha512: sha512Hex(bytes),
     canonicalization: "JSON with object keys sorted recursively; UTF-8; no whitespace",
+    signature: signer
+      ? { status: "signed" as const, algorithm: PQ_ALGORITHM, standard: PQ_STANDARD, keyId: signer.keyId, publicKey: signer.publicKey, signs: "the canonical pack bytes (the same bytes contentHash covers)", value: signer.sign(bytes) }
+      : { status: "not_configured" as const, algorithm: PQ_ALGORITHM },
   };
 }
 
 // Recomputes the fingerprint of a pack a person is holding and compares it to the hash they were
 // given. This proves the pack is unchanged since it was built, not that its contents are true.
-export function verifyAssurancePack(pack: unknown, contentHash: string): { valid: boolean; computedHash: string } {
+// With a signature it also checks the ML-DSA-65 signature and whether it was made by THIS service key.
+export interface PackSignatureInput {
+  value: string;
+  publicKey?: string;
+}
+export function verifyAssurancePack(
+  pack: unknown,
+  contentHash: string,
+  signature?: PackSignatureInput,
+  signer: PqSigner | null = null,
+): { valid: boolean; computedHash: string; signature: { status: "not_supplied" | "valid" | "invalid" | "not_this_service"; keyId?: string } } {
   const computedHash = hashPack(pack);
-  return { valid: computedHash === contentHash.toLowerCase(), computedHash };
+  const hashValid = computedHash === contentHash.toLowerCase();
+  if (!signature) return { valid: hashValid, computedHash, signature: { status: "not_supplied" } };
+  const bytes = Buffer.from(canonicalJson(pack), "utf8");
+  // A signature by some other key is not this service's statement, even if it is mathematically sound.
+  if (!signer || (signature.publicKey && signature.publicKey !== signer.publicKey)) {
+    const sound = signature.publicKey ? verifyWithPublicKey(bytes, signature.value, signature.publicKey) : false;
+    return { valid: false, computedHash, signature: { status: sound ? "not_this_service" : "invalid" } };
+  }
+  const signatureValid = signer.verify(bytes, signature.value);
+  return { valid: hashValid && signatureValid, computedHash, signature: { status: signatureValid ? "valid" : "invalid", keyId: signer.keyId } };
 }

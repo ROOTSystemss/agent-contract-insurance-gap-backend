@@ -4,6 +4,7 @@ import type { DocumentService } from "../documents/document-service.js";
 import type { Store } from "../persistence/store.js";
 import type { OAuthCodeStore } from "../security/oauth-code-store.js";
 import type { CertificateVerifier } from "../authority/certificate.js";
+import type { PqSigner } from "../crypto/pq-sign.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -12,6 +13,8 @@ declare module "fastify" {
     oauthCodes: OAuthCodeStore;
     // null when AUTHORITY_ATLAS_URL is not configured
     certificateVerifier: CertificateVerifier | null;
+    // null when PQ_SIGNING_SEED is not configured
+    pqSigner: PqSigner | null;
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {

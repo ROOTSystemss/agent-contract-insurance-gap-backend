@@ -11,6 +11,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { auditRoutes } from "./api/audit-routes.js";
 import { createAtlasVerifier, type CertificateVerifier } from "./authority/certificate.js";
+import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
 import { authRoutes } from "./api/auth-routes.js";
@@ -45,6 +46,7 @@ export interface BuildAppOptions {
   logger?: boolean;
   // Tests inject a verifier; production builds one from AUTHORITY_ATLAS_URL.
   certificateVerifier?: CertificateVerifier | null;
+  pqSigner?: PqSigner | null;
 }
 
 function isAllowedOrigin(request: FastifyRequest, configuredOrigins: string[]): boolean {
@@ -106,6 +108,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         ? createAtlasVerifier(new URL(config.AUTHORITY_ATLAS_URL).origin)
         : null,
   );
+  app.decorate("pqSigner", options.pqSigner !== undefined ? options.pqSigner : createPqSigner(config.PQ_SIGNING_SEED));
   app.decorateRequest("actor", null);
 
   await app.register(helmet, {
@@ -269,6 +272,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     "/health",
     { schema: { tags: ["system"], summary: "Liveness check" } },
     async (request) => ({ data: { status: "ok" }, meta: {}, requestId: request.id }),
+  );
+  app.get(
+    "/.well-known/rootsystems-signing-key.json",
+    { schema: { tags: ["system"], summary: "Public ML-DSA-65 key that signs Assurance Packs" } },
+    async () => publicKeyInfo(app.pqSigner),
   );
   app.get(
     "/ready",

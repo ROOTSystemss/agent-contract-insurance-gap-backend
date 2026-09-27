@@ -52,8 +52,14 @@ const envSchema = z
     // Base URL of the Authority Atlas service that issues and verifies agent authority certificates
     // (not this app's own sign-in bridge above). Optional: without it, certificate checks answer 503.
     AUTHORITY_ATLAS_URL: z.string().url().optional(),
+    // 32 random bytes, base64: the ML-DSA-65 key that signs Assurance Packs. Optional; without it packs
+    // are not signed and say so. Never change it once set (the published key would change).
+    PQ_SIGNING_SEED: z.string().optional(),
   })
   .superRefine((env, context) => {
+    if (env.PQ_SIGNING_SEED && Buffer.from(env.PQ_SIGNING_SEED, "base64").length !== 32) {
+      context.addIssue({ code: "custom", path: ["PQ_SIGNING_SEED"], message: "PQ_SIGNING_SEED must be 32 random bytes, base64-encoded." });
+    }
     if (env.NODE_ENV === "production") {
       if (env.JWT_SECRET.length < 32 || /development|replace|secret/i.test(env.JWT_SECRET)) {
         context.addIssue({

@@ -121,15 +121,18 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
       ? reconcile(agent, await requireVerifiedCertificate(app.certificateVerifier, certificate))
       : null;
 
-    const built = buildAssurancePack({
-      organizationName: organization?.name ?? "Unknown organization",
-      projectName: project.name,
-      agent,
-      analysis,
-      findings,
-      documents,
-      certificate: reconciliation,
-    });
+    const built = buildAssurancePack(
+      {
+        organizationName: organization?.name ?? "Unknown organization",
+        projectName: project.name,
+        agent,
+        analysis,
+        findings,
+        documents,
+        certificate: reconciliation,
+      },
+      app.pqSigner,
+    );
     await audit(app.store, request, "analysis", id, "assurance_pack.generate", {
       projectId: analysis.projectId,
       contentHash: built.contentHash,
@@ -141,9 +144,13 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
   // Recomputes a pack's fingerprint. Proves the pack is unchanged since it was built.
   app.post("/assurance-pack/verify", async (request) => {
     const body = z
-      .object({ pack: z.record(z.string(), z.unknown()), contentHash: z.string().regex(/^[0-9a-fA-F]{64}$/) })
+      .object({
+        pack: z.record(z.string(), z.unknown()),
+        contentHash: z.string().regex(/^[0-9a-fA-F]{64}$/),
+        signature: z.object({ value: z.string().min(1).max(8000), publicKey: z.string().max(4000).optional() }).passthrough().optional(),
+      })
       .parse(request.body);
-    return success(request, verifyAssurancePack(body.pack, body.contentHash));
+    return success(request, verifyAssurancePack(body.pack, body.contentHash, body.signature, app.pqSigner));
   });
 
   app.get("/:id/report.pdf", async (request, reply) => {

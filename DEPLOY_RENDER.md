@@ -17,6 +17,7 @@ Required environment variables (production refuses to start without them):
 | `CORS_ORIGINS` | the site origins allowed to call the API, comma-separated |
 | `TRUST_PROXY` | `true` |
 | `AUTHORITY_ATLAS_URL` | optional: the Authority Atlas base URL (https, no path), e.g. `https://authority-atlas.onrender.com`. Enables the certificate checks below; without it they answer 503. |
+| `PQ_SIGNING_SEED` | recommended: 32 random bytes, base64 (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`). The ML-DSA-65 (post-quantum, NIST FIPS 204) key that signs Assurance Packs; its public key is served at `/.well-known/rootsystems-signing-key.json`. Never change it once set. Without it packs are still built and fingerprinted but marked `not_configured`. |
 
 Uploaded documents live on the container disk, which is ephemeral on Render's free plan; they are deleted after `DOCUMENT_RETENTION_DAYS` (default 30) anyway, and structured data lives in Postgres.
 
