@@ -1,0 +1,28 @@
+name: PQC gate
+
+# Blocks any change that adds quantum-vulnerable public-key cryptography (RSA, ECDSA, ECDH, DH...).
+# Reviewed exceptions, each with a reason and an expiry date, live in .pqc-forge-ignore.json.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pqc-forge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ROOTSystemss/pqc-forge@83203b142879e0b27f9711437057ccfc2951eea8
+        with:
+          target: .
+          baseline: .pqc-forge-baseline.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pqc-forge-scan
+          path: pqc-forge-output/

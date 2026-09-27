@@ -1,0 +1,17 @@
+{
+  "schema": "pqc-forge.ignore/v1",
+  "suppressions": [
+    {
+      "ruleId": "*",
+      "path": "test/**",
+      "reason": "Test code creates classical ECDSA keys on purpose to prove forged or classical-only signatures are rejected; never used to sign real records.",
+      "expires": "2027-09-27"
+    },
+    {
+      "ruleId": "QF-ALG-ECC",
+      "path": "scripts/certificate-e2e.mjs",
+      "reason": "End-to-end script that verifies Authority Atlas ES256 certificates (the classical half of Atlas's hybrid signature); it does not sign anything.",
+      "expires": "2027-09-27"
+    }
+  ]
+}
