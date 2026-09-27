@@ -13,7 +13,7 @@ export interface DocumentClassification {
   limitations: string[];
 }
 
-function evidenceForMatch(
+export function evidenceForMatch(
   document: DocumentRecord,
   segmentIndex: number,
   start: number,

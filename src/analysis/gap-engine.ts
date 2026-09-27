@@ -9,9 +9,39 @@ import type {
 } from "../domain/types.js";
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
 import type { PackSelection } from "../jurisdictions/packs.js";
+import { evidenceForMatch } from "./clause-detector.js";
 
 export const ENGINE_VERSION = "gap-engine@1.0.0";
-export const UNIVERSAL_RULE_VERSION = "universal-gap-rules@1.0.0";
+export const UNIVERSAL_RULE_VERSION = "universal-gap-rules@1.1.0";
+
+// Standard-form AI exclusions. Since 1 January 2026 insurers can attach ISO generative-AI exclusion
+// endorsements (form numbers CG 40 47, CG 40 48 and CG 35 08) to commercial general liability
+// policies, and carriers also write their own AI exclusions. Either can remove coverage for harm an AI
+// agent causes, so any insurance document that names one of those forms, or excludes "artificial
+// intelligence" in the same sentence, is flagged with the exact text found.
+const AI_EXCLUSION_FORMS: Array<{ form: string; pattern: RegExp }> = [
+  { form: "CG 40 47", pattern: /\bCG\s*40\s*47\b/i },
+  { form: "CG 40 48", pattern: /\bCG\s*40\s*48\b/i },
+  { form: "CG 35 08", pattern: /\bCG\s*35\s*08\b/i },
+];
+const AI_EXCLUSION_WORDING =
+  /\bexclu\w*\b[^.;]{0,120}\bartificial\s+intelligence\b|\bartificial\s+intelligence\b[^.;]{0,120}\bexclu\w*\b/i;
+
+export function findAiExclusions(document: DocumentRecord): { forms: string[]; evidence: ClauseDetection["evidence"][] } {
+  const forms = new Set<string>();
+  const evidence: ClauseDetection["evidence"][] = [];
+  for (const [index, segment] of document.segments.entries()) {
+    for (const { form, pattern } of AI_EXCLUSION_FORMS) {
+      const match = pattern.exec(segment.originalText);
+      if (!match) continue;
+      forms.add(form);
+      evidence.push(evidenceForMatch(document, index, match.index, match[0].length));
+    }
+    const wording = AI_EXCLUSION_WORDING.exec(segment.originalText);
+    if (wording) evidence.push(evidenceForMatch(document, index, wording.index, wording[0].length));
+  }
+  return { forms: [...forms], evidence: evidence.slice(0, 6) };
+}
 
 interface FindingDraft {
   key: string;
@@ -416,6 +446,44 @@ export function analyzeGaps(input: {
         }),
       );
     }
+  }
+
+  for (const document of insuranceDocuments) {
+    const { forms, evidence } = findAiExclusions(document);
+    if (evidence.length === 0) continue;
+    findings.push(
+      buildFinding(input.organizationId, input.projectId, input.analysisId, {
+        key: `ai-exclusion:${document.id}`,
+        title: forms.length
+          ? `Insurance document includes an AI exclusion endorsement (${forms.join(", ")})`
+          : "Insurance document contains artificial-intelligence exclusion wording",
+        category: "potential_exclusion_relevance",
+        severity: "high",
+        confidence: forms.length ? 0.9 : 0.7,
+        capability: "autonomyLevel",
+        document,
+        clauseCategory: "exclusions",
+        documentFact: forms.length
+          ? `The document references ISO form ${forms.join(", ")}, a generative-AI exclusion endorsement introduced for commercial general liability policies from 1 January 2026.`
+          : "The document excludes something described as artificial intelligence in the same sentence as an exclusion.",
+        agentFact: `The agent is configured at autonomy level ${input.agent.autonomyLevel}.`,
+        inference:
+          "An AI exclusion may remove coverage for injury or loss that traces back to the agent's outputs or actions, which is the exposure this analysis is about.",
+        rule: "GLOBAL.INSURANCE_AI_EXCLUSION_PRESENT",
+        evidence,
+        uncertainty:
+          "Whether the exclusion applies depends on its exact wording, the rest of the policy, the facts and governing law. Some carriers restore AI coverage, or add a sublimit, by separate endorsement.",
+        limitations: [
+          "This is not a coverage determination.",
+          "Only form numbers and exclusion wording are matched; endorsements kept as separate files must be uploaded too.",
+        ],
+        questions: [
+          "Ask the broker whether this policy excludes harm caused by the agent's outputs or actions, and whether affirmative AI coverage, a sublimit or a buy-back endorsement is available.",
+          "Ask whether earlier occurrence-based policy years, written before this endorsement, still respond to claims from those years.",
+        ],
+        reviewer: "insurance_broker_or_insurer",
+      }),
+    );
   }
 
   if (input.packSelection.status === "universal_only") {
