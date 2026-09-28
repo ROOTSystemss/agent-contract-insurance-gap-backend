@@ -14,6 +14,8 @@ import type {
   Project,
   User,
   Role,
+  ServiceLink,
+  ConsoleCertificate,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -45,6 +47,8 @@ export class MemoryStore implements Store {
   private analyses = new Map<string, Analysis>();
   private findings = new Map<string, Finding>();
   private auditEvents = new Map<string, AuditEvent>();
+  private serviceLinks = new Map<string, ServiceLink>();
+  private consoleCertificates = new Map<string, ConsoleCertificate>();
 
   async ready(): Promise<boolean> {
     return true;
@@ -395,7 +399,32 @@ export class MemoryStore implements Store {
     );
   }
 
+  async getServiceLink(organizationId: string): Promise<ServiceLink | null> {
+    return this.serviceLinks.get(organizationId) ?? null;
+  }
+
+  async saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink> {
+    const existing = this.serviceLinks.get(link.organizationId);
+    const timestamp = now();
+    const saved: ServiceLink = { ...link, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    this.serviceLinks.set(link.organizationId, saved);
+    return saved;
+  }
+
+  async addConsoleCertificate(record: Omit<ConsoleCertificate, "createdAt">): Promise<ConsoleCertificate> {
+    const saved: ConsoleCertificate = { ...record, createdAt: now() };
+    this.consoleCertificates.set(record.jti, saved);
+    return saved;
+  }
+
+  async getConsoleCertificate(organizationId: string, jti: string): Promise<ConsoleCertificate | null> {
+    const record = this.consoleCertificates.get(jti);
+    return record && record.organizationId === organizationId ? record : null;
+  }
+
   async reset(): Promise<void> {
+    this.serviceLinks.clear();
+    this.consoleCertificates.clear();
     this.users.clear();
     this.organizations.clear();
     this.memberships.clear();

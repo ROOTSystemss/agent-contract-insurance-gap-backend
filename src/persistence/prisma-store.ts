@@ -14,6 +14,8 @@ import type {
   PaginationInput,
   Project,
   User,
+  ServiceLink,
+  ConsoleCertificate,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -534,8 +536,37 @@ export class PrismaStore implements Store {
     };
   }
 
+  async getServiceLink(organizationId: string): Promise<ServiceLink | null> {
+    const row = await this.client.serviceLink.findUnique({ where: { organizationId } });
+    return row ? { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) } : null;
+  }
+
+  async saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink> {
+    const { organizationId, ...fields } = link;
+    const row = await this.client.serviceLink.upsert({
+      where: { organizationId },
+      create: link,
+      update: fields,
+    });
+    return { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) };
+  }
+
+  async addConsoleCertificate(record: Omit<ConsoleCertificate, "createdAt">): Promise<ConsoleCertificate> {
+    const row = await this.client.consoleCertificate.create({
+      data: { ...record, pqSignature: record.pqSignature === null ? Prisma.JsonNull : json(record.pqSignature) },
+    });
+    return { ...row, pqSignature: row.pqSignature ?? null, createdAt: iso(row.createdAt) };
+  }
+
+  async getConsoleCertificate(organizationId: string, jti: string): Promise<ConsoleCertificate | null> {
+    const row = await this.client.consoleCertificate.findFirst({ where: { jti, organizationId } });
+    return row ? { ...row, pqSignature: row.pqSignature ?? null, createdAt: iso(row.createdAt) } : null;
+  }
+
   async reset(): Promise<void> {
     await this.client.$transaction([
+      this.client.consoleCertificate.deleteMany(),
+      this.client.serviceLink.deleteMany(),
       this.client.auditEvent.deleteMany(),
       this.client.finding.deleteMany(),
       this.client.analysisDocument.deleteMany(),

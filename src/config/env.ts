@@ -52,6 +52,9 @@ const envSchema = z
     // Base URL of the Authority Atlas service that issues and verifies agent authority certificates
     // (not this app's own sign-in bridge above). Optional: without it, certificate checks answer 503.
     AUTHORITY_ATLAS_URL: z.string().url().optional(),
+    // Base URL of Trust Proof, which checks and records agent actions. With AUTHORITY_ATLAS_URL it
+    // enables the Agent Governance console (/console); without both, console calls answer 503.
+    TRUST_PROOF_URL: z.string().url().optional(),
     // 32 random bytes, base64: the ML-DSA-65 key that signs Assurance Packs. Optional; without it packs
     // are not signed and say so. Never change it once set (the published key would change).
     PQ_SIGNING_SEED: z.string().optional(),

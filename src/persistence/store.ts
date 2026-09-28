@@ -13,6 +13,8 @@ import type {
   PaginationInput,
   Project,
   Role,
+  ServiceLink,
+  ConsoleCertificate,
   User,
 } from "../domain/types.js";
 
@@ -113,6 +115,10 @@ export interface Store {
     projectId: string,
     pagination: PaginationInput,
   ): Promise<Paginated<AuditEvent>>;
+  getServiceLink(organizationId: string): Promise<ServiceLink | null>;
+  saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink>;
+  addConsoleCertificate(record: Omit<ConsoleCertificate, "createdAt">): Promise<ConsoleCertificate>;
+  getConsoleCertificate(organizationId: string, jti: string): Promise<ConsoleCertificate | null>;
   reset(): Promise<void>;
 }
 

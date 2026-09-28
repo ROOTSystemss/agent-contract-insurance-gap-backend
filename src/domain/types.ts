@@ -115,6 +115,28 @@ export interface Organization {
   updatedAt: string;
 }
 
+// Agent Governance console: the Atlas identity and Trust Proof organization acting for a workspace.
+// atlasSecret, trustProofSecret and trustProofApiKey are ciphertext (see governance/secret-box.ts).
+export interface ServiceLink {
+  organizationId: string;
+  atlasEmail: string;
+  atlasSecret: string;
+  trustProofEmail: string;
+  trustProofSecret: string;
+  trustProofApiKey: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConsoleCertificate {
+  jti: string;
+  organizationId: string;
+  agentId: string;
+  certificate: string;
+  pqSignature: unknown;
+  createdAt: string;
+}
+
 export interface OrganizationMember {
   id: string;
   organizationId: string;

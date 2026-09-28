@@ -71,6 +71,8 @@ model Organization {
   analyses    Analysis[]
   findings    Finding[]
   auditEvents AuditEvent[]
+  serviceLink ServiceLink?
+  consoleCertificates ConsoleCertificate[]
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 }
@@ -264,4 +266,32 @@ model JurisdictionPackRecord {
 
   @@unique([countryCode, subdivisionCode, version])
   @@index([countryCode, subdivisionCode, status])
+}
+
+// Agent Governance console: the Authority Atlas identity and Trust Proof organization that act for
+// this workspace. Secrets are stored only as AES-256-GCM ciphertext (DOCUMENT_ENCRYPTION_KEY).
+model ServiceLink {
+  organizationId      String       @id @db.Uuid
+  atlasEmail          String
+  atlasSecret         String
+  trustProofEmail     String
+  trustProofSecret    String
+  trustProofApiKey    String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
+
+// Certificates issued from the console, kept so the workspace can copy them again later. A
+// certificate is a signed public statement, not a secret; revocation status lives in Atlas.
+model ConsoleCertificate {
+  jti            String       @id
+  organizationId String       @db.Uuid
+  agentId        String
+  certificate    String
+  pqSignature    Json?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
 }

@@ -11,6 +11,9 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { auditRoutes } from "./api/audit-routes.js";
 import { createAtlasVerifier, type CertificateVerifier } from "./authority/certificate.js";
+import { GovernanceGateway, type GatewayOptions } from "./governance/gateway.js";
+import { SecretBox } from "./governance/secret-box.js";
+import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
@@ -47,6 +50,8 @@ export interface BuildAppOptions {
   // Tests inject a verifier; production builds one from AUTHORITY_ATLAS_URL.
   certificateVerifier?: CertificateVerifier | null;
   pqSigner?: PqSigner | null;
+  // Tests point the console gateway at stand-in services (and a fake fetch).
+  governance?: Partial<GatewayOptions>;
 }
 
 function isAllowedOrigin(request: FastifyRequest, configuredOrigins: string[]): boolean {
@@ -107,6 +112,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       : config.AUTHORITY_ATLAS_URL
         ? createAtlasVerifier(new URL(config.AUTHORITY_ATLAS_URL).origin)
         : null,
+  );
+  app.decorate(
+    "governance",
+    new GovernanceGateway(
+      store,
+      new SecretBox(config.DOCUMENT_ENCRYPTION_KEY ? Buffer.from(config.DOCUMENT_ENCRYPTION_KEY, "base64") : null),
+      {
+        atlasUrl: config.AUTHORITY_ATLAS_URL ? new URL(config.AUTHORITY_ATLAS_URL).origin : null,
+        trustProofUrl: config.TRUST_PROOF_URL ? new URL(config.TRUST_PROOF_URL).origin : null,
+        ...options.governance,
+      },
+    ),
   );
   app.decorate("pqSigner", options.pqSigner !== undefined ? options.pqSigner : createPqSigner(config.PQ_SIGNING_SEED));
   app.decorateRequest("actor", null);
@@ -333,6 +350,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(analysisRoutes, { prefix: "/api/v1/analyses" });
   await app.register(findingRoutes, { prefix: "/api/v1/findings" });
   await app.register(auditRoutes, { prefix: "/api/v1/projects" });
+  await app.register(consoleRoutes, { prefix: "/api/v1/console" });
 
   return app;
 }
