@@ -149,7 +149,11 @@ export class GovernanceGateway {
     if (result.status === 400) throw new AppError(400, "VALIDATION_ERROR", message);
     if (result.status === 404) throw new AppError(404, "NOT_FOUND", message);
     if (result.status === 409) throw new AppError(409, "CONFLICT", message);
-    if (result.status === 429) throw new AppError(429, "RATE_LIMITED", "Too many requests to a linked service. Try again shortly.");
+    if (result.status === 429) {
+      // Name the busy service so the customer (and support) know what to wait for.
+      const service = what.includes("Trust Proof") || what.includes("ledger") ? "Trust Proof" : "Authority Atlas";
+      throw new AppError(429, "RATE_LIMITED", `${service} is busy right now (${what.toLowerCase()}). Please try again in a few minutes.`);
+    }
     throw new AppError(502, "UPSTREAM_ERROR", `${what} failed (linked service answered ${result.status}).`);
   }
 
