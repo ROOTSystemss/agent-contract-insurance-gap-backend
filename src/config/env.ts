@@ -55,6 +55,9 @@ const envSchema = z
     // Base URL of Trust Proof, which checks and records agent actions. With AUTHORITY_ATLAS_URL it
     // enables the Agent Governance console (/console); without both, console calls answer 503.
     TRUST_PROOF_URL: z.string().url().optional(),
+    // Shared with Authority Atlas and Trust Proof (same value on all three): lets the console create one
+    // identity/organization per workspace from this single server without hitting per-IP signup limits.
+    CONSOLE_SERVICE_TOKEN: z.string().min(32).optional(),
     // 32 random bytes, base64: the ML-DSA-65 key that signs Assurance Packs. Optional; without it packs
     // are not signed and say so. Never change it once set (the published key would change).
     PQ_SIGNING_SEED: z.string().optional(),

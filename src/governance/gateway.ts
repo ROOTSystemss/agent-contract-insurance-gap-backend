@@ -18,6 +18,8 @@ export interface GatewayOptions {
   timeoutMs?: number;
   // Synthetic mailbox domain for the linked service accounts (never emailed).
   accountDomain?: string;
+  // CONSOLE_SERVICE_TOKEN, sent as x-rootsystems-service so Atlas/Trust Proof know this is the console.
+  serviceToken?: string | null;
 }
 
 export interface IssueCertificateInput {
@@ -122,6 +124,7 @@ export class GovernanceGateway {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (token) headers.Authorization = `Bearer ${token}`;
     if (cookie) headers.Cookie = cookie;
+    if (this.options.serviceToken) headers["x-rootsystems-service"] = this.options.serviceToken;
     let response: Response;
     try {
       response = await this.fetchImpl(base + path, {

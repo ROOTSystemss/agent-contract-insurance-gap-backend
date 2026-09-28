@@ -27,6 +27,7 @@ const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", {
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
 });
 const b64 = (s) => Buffer.from(s).toString("base64");
+const SERVICE_TOKEN = crypto.randomBytes(32).toString("base64url");
 
 function start(args, cwd, env, ready) {
   return new Promise((resolve, reject) => {
@@ -63,19 +64,19 @@ try {
   atlas = await start(["src/server.js"], ATLAS_DIR, {
     PORT: String(ATLAS_PORT), NODE_ENV: "production", DATABASE_URL: "",
     ATLAS_PRIVATE_KEY_B64: b64(privateKey), ATLAS_PUBLIC_KEY_B64: b64(publicKey),
-    PQ_SIGNING_SEED: Buffer.alloc(32, 71).toString("base64"),
+    PQ_SIGNING_SEED: Buffer.alloc(32, 71).toString("base64"), CONSOLE_SERVICE_TOKEN: SERVICE_TOKEN,
   }, /running on/);
   tp = await start(["src/app.js"], TP_DIR, {
     PORT: String(TP_PORT), DATA_DIR, NODE_ENV: "development", ATLAS_URL: ATLAS, APP_URL: TP, DATABASE_URL: "",
     SESSION_SECRET: "console-e2e-secret-not-for-production-use-only", ANCHOR_INTERVAL_MINUTES: "1440",
-    PQ_SIGNING_SEED: Buffer.alloc(32, 72).toString("base64"),
+    PQ_SIGNING_SEED: Buffer.alloc(32, 72).toString("base64"), CONSOLE_SERVICE_TOKEN: SERVICE_TOKEN,
     CONNECTOR_API_RATE_LIMIT_PER_MINUTE: "100000", CONNECTOR_API_PREAUTH_RATE_LIMIT_PER_MINUTE: "100000", AGENT_ACTIONS_RATE_LIMIT_PER_MINUTE: "100000",
   }, /listening/);
   gap = await start(["dist/server.js"], ROOT, {
     PORT: String(GAP_PORT), HOST: "127.0.0.1", NODE_ENV: "development", PERSISTENCE_DRIVER: "memory", LOG_LEVEL: "info",
     AUTHORITY_ATLAS_URL: ATLAS, TRUST_PROOF_URL: TP, DATABASE_URL: "",
     DOCUMENT_ENCRYPTION_KEY: crypto.randomBytes(32).toString("base64"),
-    JWT_SECRET: "console-e2e-jwt-secret-long-enough-000000", RATE_LIMIT_MAX: "100000",
+    JWT_SECRET: "console-e2e-jwt-secret-long-enough-000000", RATE_LIMIT_MAX: "100000", CONSOLE_SERVICE_TOKEN: SERVICE_TOKEN,
   }, /listening|Server listening|started/i);
 
   const a = await workspace("Northwind Robotics");
@@ -142,6 +143,17 @@ try {
   check("another workspace cannot open this certificate (404)", r.status === 404, r.status);
   r = await call(GAP, "POST", `/api/v1/console/certificates/${issued.jti}/revoke`, { token: b });
   check("another workspace cannot revoke it (404)", r.status === 404, `${r.status} ${JSON.stringify(r.json).slice(0, 120)}`);
+
+  // Many activations from one server address (the console holds the service token).
+  const many = [];
+  // Contract Gap itself allows 10 registrations a minute per visitor, so the test paces its own signups.
+  await new Promise((r) => setTimeout(r, 61000));
+  for (let i = 0; i < 12; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 6500));
+    const t = await workspace("Bulk Co " + i);
+    many.push((await call(GAP, "POST", "/api/v1/console/link", { token: t })).status);
+  }
+  check("12 more workspaces activate back to back (per-IP signup limits do not cap the console)", many.every((s) => s === 200), many.join(","));
 
   // Revocation
   r = await call(GAP, "POST", `/api/v1/console/certificates/${issued.jti}/revoke`, { token: a });

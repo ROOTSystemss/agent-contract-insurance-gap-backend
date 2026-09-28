@@ -90,6 +90,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
                 "req.body.token",
                 "req.body.clientSecret",
                 "req.body.code",
+              "req.headers['x-rootsystems-service']",
                 "res.headers['set-cookie']",
               ],
               censor: "[REDACTED]",
@@ -121,6 +122,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       {
         atlasUrl: config.AUTHORITY_ATLAS_URL ? new URL(config.AUTHORITY_ATLAS_URL).origin : null,
         trustProofUrl: config.TRUST_PROOF_URL ? new URL(config.TRUST_PROOF_URL).origin : null,
+        serviceToken: config.CONSOLE_SERVICE_TOKEN ?? null,
         ...options.governance,
       },
     ),
