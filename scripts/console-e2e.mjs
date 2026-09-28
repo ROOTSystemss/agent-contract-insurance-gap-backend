@@ -139,6 +139,39 @@ try {
   r = await call(GAP, "GET", "/api/v1/console/ledger/verify", { token: a });
   check("ledger chain verifies and the checkpoint is ML-DSA-65 signed", r.json?.data?.valid === true && r.json?.data?.signature?.algorithm === "ML-DSA-65", JSON.stringify(r.json).slice(0, 200));
 
+  // Approvals: a teammate signs off a request with their own key.
+  r = await call(GAP, "POST", "/api/v1/console/team", { token: a, body: { name: "Sam Rivera", email: "sam_" + crypto.randomBytes(3).toString("hex") + "@example.com", role: "analyst" } });
+  const sam = r.json?.data;
+  check("owner adds a teammate and gets a one-time password", r.status === 201 && typeof sam?.temporaryPassword === "string", `${r.status} ${JSON.stringify(r.json).slice(0, 150)}`);
+  const samToken = (await call(GAP, "POST", "/api/v1/auth/login", { body: { email: sam.email, password: sam.temporaryPassword } })).json?.data?.accessToken;
+  check("teammate signs in to the same workspace", typeof samToken === "string");
+  r = await call(GAP, "POST", "/api/v1/console/signing-key", { token: samToken, body: { passphrase: "sam-signing-passphrase-2026" } });
+  check("teammate sets up a personal signing key", r.status === 200, `${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+  r = await call(GAP, "POST", "/api/v1/console/signing-key", { token: a, body: { passphrase: "owner-signing-passphrase-2026" } });
+  check("owner sets up a signing key", r.status === 200, `${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+  r = await call(GAP, "GET", "/api/v1/console/team", { token: a });
+  const samId = r.json?.data?.find((m) => m.email === sam.email)?.userId;
+  const ownerId = r.json?.data?.find((m) => m.role === "owner")?.userId;
+  check("team shows both members as able to sign", r.json?.data?.length === 2 && r.json.data.every((m) => m.canSign));
+  const request = { title: "Raise Payments Bot limit to $1,000", details: "Quarter-end vendor payments need a higher per-action limit for two weeks." };
+  r = await call(GAP, "POST", "/api/v1/console/approvals", { token: a, body: { ...request, signerUserIds: [ownerId] } });
+  check("owner cannot be a required signer on their own request (400)", r.status === 400 && r.json?.error?.code === "SELF_APPROVAL", r.status);
+  r = await call(GAP, "POST", "/api/v1/console/approvals", { token: a, body: { ...request, signerUserIds: [samId], reference: issued.jti } });
+  const decision = r.json?.data;
+  check("owner requests approval from the teammate", r.status === 201 && decision?.id !== undefined, `${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+  r = await call(GAP, "GET", "/api/v1/console/approvals", { token: samToken });
+  check("teammate sees the request waiting", r.json?.data?.decisions?.some((d) => d.id === decision.id && d.status === "pending"), JSON.stringify(r.json).slice(0, 200));
+  r = await call(GAP, "POST", `/api/v1/console/approvals/${decision.id}/sign`, { token: samToken, body: { passphrase: "not-the-right-passphrase" } });
+  check("a wrong passphrase cannot sign (403, stays signed in)", r.status === 403 && r.json?.error?.code === "INVALID_PASSPHRASE", r.status);
+  r = await call(GAP, "POST", `/api/v1/console/approvals/${decision.id}/sign`, { token: samToken, body: { passphrase: "sam-signing-passphrase-2026" } });
+  check("teammate signs with their own key", r.status === 200 && r.json?.data?.decision?.status === "fully_signed", `${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+  r = await call(GAP, "GET", `/api/v1/console/approvals/${decision.id}`, { token: a });
+  const sigs = r.json?.data?.signatures ?? [];
+  check("the approval carries one signature bound to the teammate", sigs.length === 1 && sigs[0].signer?.email === sam.email && typeof sigs[0].signatureValue === "string", JSON.stringify(r.json).slice(0, 250));
+
+  r = await call(GAP, "GET", "/api/v1/console/coverage", { token: a });
+  check("coverage summary answers for the workspace", r.status === 200 && Array.isArray(r.json?.data?.projects), r.status);
+
   // Tenant isolation
   r = await call(GAP, "GET", "/api/v1/console/certificates", { token: b });
   check("another workspace sees none of these certificates", r.status === 200 && Array.isArray(r.json?.data) && r.json.data.length === 0, JSON.stringify(r.json).slice(0, 150));

@@ -398,6 +398,8 @@ table.data tbody tr.clickable:hover { background: rgba(243, 234, 217, 0.03); }
   .cards--agents .c-agent { grid-area: agent; } .cards--agents .c-perms { grid-area: perms; } .cards--agents .c-status { grid-area: status; } .cards--agents .c-active { grid-area: active; align-self: center; }
   .cards--ledger tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "action verdict" "agentid when" "amount amount"; }
   .cards--ledger .c-action { grid-area: action; } .cards--ledger .c-verdict { grid-area: verdict; } .cards--ledger .c-agentid { grid-area: agentid; } .cards--ledger .c-when { grid-area: when; text-align: right; } .cards--ledger .c-amount { grid-area: amount; }
+  .cards--approvals tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title status" "signers when"; }
+  .cards--approvals .c-title { grid-area: title; } .cards--approvals .c-status { grid-area: status; } .cards--approvals .c-signers { grid-area: signers; } .cards--approvals .c-when { grid-area: when; text-align: right; }
   .cards--ledger tr.verdict-row { box-shadow: inset 3px 0 0 var(--rose); }
   .cards--ledger tr.verdict-row.is-within { box-shadow: inset 3px 0 0 var(--teal); }
   .cards--ledger .verdict-row td:first-child { box-shadow: none; }

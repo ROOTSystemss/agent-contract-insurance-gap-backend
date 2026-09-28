@@ -214,7 +214,7 @@
     { id: "overview", label: "Overview", icon: "overview" },
     { id: "agents", label: "Agents & certificates", icon: "agents" },
     { id: "ledger", label: "Action ledger", icon: "ledger" },
-    { id: "approvals", label: "Approvals", icon: "approvals", soon: true },
+    { id: "approvals", label: "Approvals", icon: "approvals" },
     { id: "coverage", label: "Coverage", icon: "coverage" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
@@ -687,20 +687,218 @@
     load();
   }
 
-  function viewApprovals(content) {
-    content.appendChild(h("div", { class: "panel" }, h("div", { class: "empty" }, icon("approvals"),
-      h("h4", { text: "Named human sign-off is coming next" }),
-      h("p", { text: "Soon a named person in your team will be able to approve an agent's high-stakes decision or an Assurance Pack, with a signature bound to them and verifiable by anyone. The signing already runs in Trust Proof; this screen is being built now." }))));
+  // ----- approvals: named people sign with their own keys -----
+  var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
+  function statusPill(status) {
+    var tone = status === "fully_signed" ? "within" : status === "declined" ? "outside" : "pq";
+    return h("span", { class: "pill pill--" + tone, text: STATUS_LABEL[status] || status });
   }
 
+  function viewApprovals(content) {
+    var data = null;
+    var filter = "all";
+    var body = h("tbody");
+    var setupHost = h("div");
+    var seg = h("div", { class: "segmented", role: "group", "aria-label": "Filter approvals" });
+    [["all", "All"], ["open", "Waiting"], ["fully_signed", "Approved"], ["declined", "Declined"]].forEach(function (o) {
+      seg.appendChild(h("button", { type: "button", "aria-pressed": String(o[0] === filter), text: o[1], onclick: function () {
+        filter = o[0]; Array.from(seg.children).forEach(function (b, i) { b.setAttribute("aria-pressed", String(["all", "open", "fully_signed", "declined"][i] === filter)); }); paint();
+      } }));
+    });
+    var newBtn = h("button", { class: "btn btn--primary", onclick: function () { if (data) openRequestDrawer(data, load); } }, icon("plus"), "Request approval");
+    content.appendChild(setupHost);
+    content.appendChild(h("div", { class: "toolbar" }, seg, h("div", { class: "spacer" }), h("button", { class: "btn", onclick: load }, icon("refresh"), "Refresh"), newBtn));
+    content.appendChild(h("div", { class: "panel" }, h("div", { class: "table-wrap" }, h("table", { class: "data cards cards--approvals" },
+      h("thead", null, h("tr", null, ["Request", "Signers", "Status", "Raised"].map(function (x) { return h("th", { text: x }); }))), body))));
+
+    function nameFor(email) {
+      var m = data && data.team.find(function (t) { return t.email.toLowerCase() === String(email).toLowerCase(); });
+      return m ? m.name : email;
+    }
+    function paint() {
+      clear(body);
+      var rows = (data ? data.decisions : []).filter(function (d) {
+        return filter === "all" || (filter === "open" ? d.status === "pending" || d.status === "partially_signed" : d.status === filter);
+      });
+      if (!rows.length) {
+        body.appendChild(h("tr", null, h("td", { colspan: "4" }, h("div", { class: "empty" }, icon("approvals"),
+          h("h4", { text: data && data.decisions.length ? "Nothing in this view" : "No approval requests yet" }),
+          h("p", { text: "Ask a named colleague to approve a high-stakes change, such as raising an agent's spending limit or accepting an Assurance Pack. Their signature is bound to them and verifiable by anyone." })))));
+        return;
+      }
+      rows.forEach(function (d) {
+        body.appendChild(h("tr", { class: "clickable", tabindex: "0", onclick: function () { openDecisionDrawer(d.id, data, load); }, onkeydown: function (ev) { if (ev.key === "Enter") openDecisionDrawer(d.id, data, load); } },
+          h("td", { class: "c-title" }, h("strong", { style: "color:var(--cream)", text: d.decisionType }), h("div", { class: "faint", style: "font-size:12px", text: short(typeof d.content === "string" ? d.content : "", 90) })),
+          h("td", { class: "muted c-signers", text: (d.requiredSigners || []).map(nameFor).join(", ") }),
+          h("td", { class: "c-status" }, statusPill(d.status)),
+          h("td", { class: "faint mono c-when", style: "font-size:12px;white-space:nowrap", text: ago(d.createdAt) })));
+      });
+    }
+    function paintSetup() {
+      clear(setupHost);
+      if (!data || !data.me || data.me.canSign) return;
+      var p1 = h("input", { class: "input", type: "password", minlength: "10", autocomplete: "new-password", placeholder: "At least 10 characters" });
+      var p2 = h("input", { class: "input", type: "password", minlength: "10", autocomplete: "new-password" });
+      var go = h("button", { class: "btn btn--primary" }, icon("lock"), "Create my signing key");
+      go.addEventListener("click", function () {
+        if (p1.value.length < 10) return toast("Use at least 10 characters", true);
+        if (p1.value !== p2.value) return toast("The two passphrases do not match", true);
+        go.disabled = true;
+        api("/console/signing-key", { method: "POST", body: { passphrase: p1.value } }).then(function () {
+          p1.value = ""; p2.value = ""; toast("Your signing key is ready"); load();
+        }).catch(function (err) { go.disabled = false; toast(err.message, true); });
+      });
+      setupHost.appendChild(h("div", { class: "panel", style: "margin-bottom:18px" },
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Set up your signing key" }), h("p", { text: "Creates your personal key pair (ECDSA + ML-DSA-65) in Trust Proof, locked with a passphrase only you know. RootSystems never stores it: if you forget it, a new key must be issued." }))),
+        h("div", { class: "panel__body" }, h("div", { class: "form-grid" }, h("div", { class: "two" }, field("Signing passphrase", p1), field("Repeat it", p2)), h("div", null, go)))));
+    }
+    function load() {
+      clear(body).appendChild(h("tr", null, h("td", { colspan: "4" }, h("div", { class: "skeleton" }))));
+      api("/console/approvals").then(function (r) { data = r; paintSetup(); paint(); }).catch(function (err) { clear(body); toast(err.message, true); });
+    }
+    load();
+  }
+
+  function askPassphrase(title, text, confirmLabel, withReason, onSubmit) {
+    var scrim = h("div", { class: "scrim" });
+    var modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "pp-t" });
+    function close() { scrim.remove(); modal.remove(); }
+    scrim.addEventListener("click", close);
+    var pass = h("input", { class: "input", type: "password", autocomplete: "current-password", "aria-label": "Signing passphrase" });
+    var reason = withReason ? h("input", { class: "input", placeholder: "Reason (shared with the requester)", maxlength: "500" }) : null;
+    var go = h("button", { class: withReason ? "btn btn--danger" : "btn btn--primary" }, icon(withReason ? "ban" : "lock"), confirmLabel);
+    function submit() {
+      if (!pass.value) return;
+      go.disabled = true;
+      onSubmit(pass.value, reason ? reason.value : "").then(close).catch(function (err) { go.disabled = false; pass.value = ""; toast(err.message, true); });
+    }
+    go.addEventListener("click", submit);
+    pass.addEventListener("keydown", function (ev) { if (ev.key === "Enter") submit(); });
+    append(modal, [h("h3", { id: "pp-t", text: title }), h("p", { text: text }),
+      h("div", { class: "form-grid", style: "margin-bottom:18px" }, field("Your signing passphrase", pass), reason ? field("Reason", reason) : null),
+      h("div", { class: "modal__actions" }, h("button", { class: "btn", onclick: close, text: "Cancel" }), go)]);
+    document.body.appendChild(scrim); document.body.appendChild(modal);
+    pass.focus();
+  }
+
+  function openDecisionDrawer(id, data, after) {
+    var host = h("div", { class: "form-grid" }, h("div", { class: "skeleton" }));
+    var foot = h("div", { style: "display:flex;gap:10px" });
+    var d = drawer("Approval request", "Signed with each person's own key; verifiable without trusting RootSystems.", [host], [foot]);
+    api("/console/approvals/" + id).then(function (x) {
+      clear(host);
+      var mine = data.me && (x.requiredSigners || []).some(function (e) { return e.toLowerCase() === data.me.email.toLowerCase(); });
+      var signedBy = (x.signatures || []).map(function (s) { return (s.signer && s.signer.email || "").toLowerCase(); });
+      var open = x.status === "pending" || x.status === "partially_signed";
+      append(host, [
+        h("div", null, statusPill(x.status)),
+        h("div", { class: "cert__title", style: "font-size:24px", text: x.decisionType }),
+        h("div", { class: "codeblock", style: "white-space:pre-wrap;font-family:var(--sans);font-size:13.5px", text: typeof x.content === "string" ? x.content : JSON.stringify(x.content, null, 2) }),
+        h("dl", { class: "cert__grid", style: "margin-top:0" },
+          h("div", null, h("dt", { text: "Requested by" }), h("dd", { text: x.proposedBy || "—" })),
+          h("div", null, h("dt", { text: "Raised" }), h("dd", { text: date(x.createdAt) })),
+          x.externalRef ? h("div", { class: "full" }, h("dt", { text: "Reference" }), h("dd", { class: "mono", style: "font-size:12px", text: x.externalRef })) : null,
+          h("div", { class: "full" }, h("dt", { text: "Content fingerprint (SHA-256)" }), h("dd", { class: "mono", style: "font-size:11.5px", text: x.contentHash }))),
+        h("div", null, h("div", { class: "nav__label", style: "margin:0 0 10px", text: "Signers" }), h("ul", { class: "verify-list" }, (x.requiredSigners || []).map(function (email) {
+          var sig = (x.signatures || []).find(function (s) { return (s.signer && s.signer.email || "").toLowerCase() === email.toLowerCase(); });
+          var member = data.team.find(function (t) { return t.email.toLowerCase() === email.toLowerCase(); });
+          var state = !sig ? "wait" : sig.action === "declined" ? "bad" : "ok";
+          return h("li", { class: state }, icon(state === "ok" ? "check" : state === "bad" ? "x" : "loader"),
+            h("span", { text: (member ? member.name : email) + (sig ? (sig.action === "declined" ? " declined" + (sig.reason ? ": " + sig.reason : "") : " signed") : " — waiting") }),
+            sig ? h("small", { text: (sig.pqAlgorithm ? sig.signatureAlgorithm + " + " + sig.pqAlgorithm : sig.signatureAlgorithm) + " · " + ago(sig.signedAt) }) : null);
+        }))),
+      ]);
+      clear(foot);
+      if (mine && open && signedBy.indexOf(data.me.email.toLowerCase()) < 0) {
+        if (!data.me.canSign) {
+          foot.appendChild(h("span", { class: "faint", style: "font-size:12.5px", text: "Set up your signing key first (top of Approvals)." }));
+        } else {
+          foot.appendChild(h("button", { class: "btn btn--danger", onclick: function () {
+            askPassphrase("Decline this request?", "Your decline is signed with your key and recorded permanently.", "Decline", true, function (p, reason) {
+              return api("/console/approvals/" + id + "/decline", { method: "POST", body: { passphrase: p, reason: reason || undefined } }).then(function () { toast("Declined and recorded"); d.close(); after(); });
+            });
+          } }, icon("ban"), "Decline"));
+          foot.appendChild(h("button", { class: "btn btn--primary", onclick: function () {
+            askPassphrase("Sign this approval?", "Your signature binds you, by name, to exactly this content. It cannot be undone.", "Sign", false, function (p) {
+              return api("/console/approvals/" + id + "/sign", { method: "POST", body: { passphrase: p } }).then(function () { toast("Signed with your key"); d.close(); after(); });
+            });
+          } }, icon("lock"), "Sign"));
+        }
+      }
+      foot.appendChild(h("button", { class: "btn", onclick: function () { d.close(); }, text: "Close" }));
+    }).catch(function (err) { clear(host); toast(err.message, true); });
+  }
+
+  function openRequestDrawer(data, after) {
+    var title = h("input", { class: "input", maxlength: "200", placeholder: "Raise Payments Bot limit to $1,000" });
+    var details = h("textarea", { class: "input", rows: "6", maxlength: "20000", style: "height:auto;padding:12px;line-height:1.5", placeholder: "What exactly is being approved, and why." });
+    var reference = h("input", { class: "input mono", maxlength: "200", placeholder: "Optional: certificate id, ticket, Assurance Pack hash" });
+    var picks = {};
+    var others = data.team.filter(function (t) { return !data.me || t.userId !== data.me.userId; });
+    var list = h("ul", { class: "verify-list" }, others.length ? others.map(function (t) {
+      var box = h("button", { class: "switch", role: "switch", "aria-checked": "false", "aria-label": "Require " + t.name, disabled: t.canSign ? null : true });
+      box.addEventListener("click", function () { picks[t.userId] = !picks[t.userId]; box.setAttribute("aria-checked", String(!!picks[t.userId])); });
+      return h("li", { class: t.canSign ? "ok" : "wait" }, box, h("span", { text: t.name + " · " + t.role }), h("small", { text: t.canSign ? "can sign" : "no signing key yet" }));
+    }) : h("li", { class: "wait" }, icon("alert"), h("span", { text: "Add a teammate in Settings first. You cannot approve your own request." })));
+    var send = h("button", { class: "btn btn--primary" }, icon("approvals"), "Send request");
+    var dr = drawer("Request approval", "Named signers approve with their own keys. You cannot sign your own request.", [
+      h("div", { class: "form-grid" }, field("What needs approval", title), field("Details", details), field("Reference", reference),
+        h("div", null, h("div", { class: "nav__label", style: "margin:0 0 10px", text: "Required signers" }), list)),
+    ], [h("button", { class: "btn", onclick: function () { dr.close(); }, text: "Cancel" }), send]);
+    send.addEventListener("click", function () {
+      var ids = Object.keys(picks).filter(function (k) { return picks[k]; });
+      if (title.value.trim().length < 3 || details.value.trim().length < 3) return toast("Add a title and the details", true);
+      if (!ids.length) return toast("Choose at least one signer", true);
+      send.disabled = true;
+      api("/console/approvals", { method: "POST", body: { title: title.value.trim(), details: details.value.trim(), signerUserIds: ids, reference: reference.value.trim() || undefined } })
+        .then(function () { dr.close(); toast("Approval requested"); after(); })
+        .catch(function (err) { send.disabled = false; toast(err.message, true); });
+    });
+    title.focus();
+  }
+
+  var ATTENTION = { low_attention: ["low", "within"], moderate_attention: ["moderate", "pq"], high_attention: ["high", "outside"], critical_review: ["critical", "outside"] };
   function viewCoverage(content) {
-    content.appendChild(h("div", { class: "panel activate" },
-      h("div", { class: "pill pill--pq", text: "Agent Contract Gap" }),
-      h("h2", { style: "margin-top:16px" }, "Does your insurance cover what your agents can do?"),
-      h("p", { text: "Compare each agent's authority with your contracts and insurance, including the AI exclusions insurers added in 2026, and produce a signed Assurance Pack for your broker. Your projects and analyses open in the coverage workspace, with the same sign-in." }),
-      h("div", { style: "display:flex;gap:12px;flex-wrap:wrap;position:relative" },
-        h("a", { class: "btn btn--primary btn--lg", href: "/" }, "Open coverage workspace", icon("arrow")),
-        h("a", { class: "btn btn--lg", href: "/docs" }, "API reference"))));
+    var host = h("div", { class: "grid" }, h("div", { class: "panel" }, h("div", { class: "panel__body" }, h("div", { class: "skeleton" }))));
+    content.appendChild(h("div", { class: "toolbar" }, h("p", { class: "muted", style: "margin:0", text: "Where your agents' authority may outrun your contracts and insurance." }), h("div", { class: "spacer" }),
+      h("a", { class: "btn btn--primary", href: "/" }, icon("plus"), "New analysis")));
+    content.appendChild(host);
+    api("/console/coverage").then(function (c) {
+      clear(host);
+      if (!c.projects.length) {
+        host.appendChild(h("div", { class: "panel activate" },
+          h("div", { class: "pill pill--pq", text: "Agent Contract Gap" }),
+          h("h2", { style: "margin-top:16px" }, "Does your insurance cover what your agents can do?"),
+          h("p", { text: "Compare each agent's authority with your contracts and insurance, including the AI exclusions insurers added in 2026, and produce a signed Assurance Pack for your broker. Start your first project in the coverage workspace (same sign-in)." }),
+          h("a", { class: "btn btn--primary btn--lg", href: "/" }, "Start a coverage analysis", icon("arrow"))));
+        return;
+      }
+      c.projects.forEach(function (p) {
+        var rows = h("tbody");
+        if (!p.analyses.length) rows.appendChild(h("tr", null, h("td", { colspan: "4", class: "muted", text: "No analyses yet in this project." })));
+        p.analyses.forEach(function (a) {
+          var done = a.state === "completed" || a.state === "completed_with_warnings";
+          var at = a.attention ? ATTENTION[a.attention.label] : null;
+          var pack = done ? h("button", { class: "btn btn--sm" }, icon("download"), "Signed Assurance Pack") : null;
+          if (pack) pack.addEventListener("click", function () {
+            pack.disabled = true;
+            api("/analyses/" + a.id + "/assurance-pack", { method: "POST", body: {} }).then(function (res) {
+              pack.disabled = false;
+              downloadJson(res, "assurance-pack-" + a.id.slice(0, 8) + ".json");
+              toast(res.signature && res.signature.status === "signed" ? "Assurance Pack signed (ML-DSA-65) and downloaded" : "Assurance Pack downloaded");
+            }).catch(function (err) { pack.disabled = false; toast(err.message, true); });
+          });
+          rows.appendChild(h("tr", null,
+            h("td", null, h("strong", { style: "color:var(--cream)", text: a.agentName }), h("div", { class: "faint mono", style: "font-size:11.5px", text: a.state.replace(/_/g, " ") })),
+            h("td", null, at ? h("span", { class: "pill pill--" + at[1], text: at[0] + " · " + a.attention.score }) : h("span", { class: "faint", text: "—" })),
+            h("td", { class: "faint mono", style: "font-size:12px", text: ago(a.completedAt || a.createdAt) }),
+            h("td", { style: "text-align:right" }, pack)));
+        });
+        host.appendChild(h("div", { class: "panel" },
+          h("div", { class: "panel__head" }, h("div", null, h("h3", { text: p.name }), h("p", { text: p.analyses.length + " analysis" + (p.analyses.length === 1 ? "" : "es") })), h("div", { class: "actions" }, h("a", { class: "btn btn--sm", href: "/" }, "Open project", icon("arrow")))),
+          h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Agent", "Attention", "Updated", ""].map(function (x) { return h("th", { text: x }); }))), rows))));
+      });
+    }).catch(function (err) { clear(host); toast(err.message, true); });
   }
 
   function viewSettings(content) {
@@ -735,10 +933,16 @@
     copyBtn.addEventListener("click", function () { if (revealed) copy(revealed.apiKey, "API key"); });
     var billingHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
     loadBilling(billingHost, isAdmin);
+    var teamHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
+    loadTeam(teamHost, isAdmin);
+    var teamPanel = h("div", { class: "panel" },
+      h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Team" }), h("p", { text: "Everyone here shares this workspace. Approvers sign with their own keys." }))),
+      teamHost);
     content.appendChild(h("div", { class: "grid", style: "max-width:980px" },
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Plan & billing" }), h("p", { text: "Priced per workspace. Payments by Dodo Payments; cancel any time." }))),
         billingHost),
+      teamPanel,
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Connect your agent" }), h("p", { text: "Your runtime reports each action with this workspace's Trust Proof key and the agent's certificate." }))),
         h("div", { class: "panel__body", style: "display:grid;gap:16px" },
@@ -760,6 +964,42 @@
           h("a", { class: "btn", href: "https://rootsystems.app/dpa", target: "_blank", rel: "noopener" }, "Data Processing Agreement"),
           h("a", { class: "btn", href: "https://rootsystems.app/privacy", target: "_blank", rel: "noopener" }, "Privacy"),
           h("button", { class: "btn btn--ghost", onclick: function () { signOut(false); } }, icon("logout"), "Sign out")))));
+  }
+
+  function loadTeam(host, isAdmin) {
+    api("/console/team").then(function (team) {
+      clear(host);
+      host.appendChild(h("ul", { class: "verify-list" }, team.map(function (m) {
+        return h("li", { class: m.canSign ? "ok" : "wait" }, h("div", { class: "who__avatar", style: "width:28px;height:28px;font-size:12px", text: m.name.slice(0, 1).toUpperCase() }),
+          h("span", null, h("strong", { style: "color:var(--cream);font-weight:600", text: m.name }), " ", h("span", { class: "faint", text: m.email })),
+          h("small", { text: m.role + (m.canSign ? " · can sign" : "") }));
+      })));
+      if (!isAdmin) return;
+      var name = h("input", { class: "input", placeholder: "Sam Rivera", maxlength: "100" });
+      var email = h("input", { class: "input", type: "email", placeholder: "sam@company.com" });
+      var role = h("select", { class: "select" }, h("option", { value: "analyst", text: "Analyst: issue certificates, request approvals" }), h("option", { value: "admin", text: "Admin: also revoke, billing, keys" }), h("option", { value: "viewer", text: "Viewer: read only" }));
+      var add = h("button", { class: "btn" }, icon("plus"), "Add teammate");
+      add.addEventListener("click", function () {
+        if (name.value.trim().length < 2 || !email.value.includes("@")) return toast("Add a name and a work email", true);
+        add.disabled = true;
+        api("/console/team", { method: "POST", body: { name: name.value.trim(), email: email.value.trim(), role: role.value } }).then(function (r) {
+          add.disabled = false; name.value = ""; email.value = "";
+          showOneTimePassword(r.email, r.temporaryPassword);
+          loadTeam(host, isAdmin);
+        }).catch(function (err) { add.disabled = false; toast(err.message, true); });
+      });
+      host.appendChild(h("div", { class: "form-grid", style: "margin-top:16px" }, h("div", { class: "two" }, field("Name", name), field("Work email", email)), field("Role", role), h("div", null, add)));
+    }).catch(function (err) { clear(host); toast(err.message, true); });
+  }
+  function showOneTimePassword(email, password) {
+    var scrim = h("div", { class: "scrim" });
+    var modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "otp-t" });
+    function close() { scrim.remove(); modal.remove(); }
+    append(modal, [h("h3", { id: "otp-t", text: "Teammate added" }),
+      h("p", { text: "Send " + email + " this one-time password privately (not in the same message as the email). It is shown only now." }),
+      h("div", { class: "secret", style: "margin-bottom:18px" }, h("input", { class: "input mono", readonly: true, value: password, "aria-label": "One-time password" }), h("button", { class: "btn", onclick: function () { copy(password, "Password"); } }, icon("copy"), "Copy")),
+      h("div", { class: "modal__actions" }, h("button", { class: "btn btn--primary", onclick: close, text: "Done" }))]);
+    document.body.appendChild(scrim); document.body.appendChild(modal);
   }
 
   function loadBilling(host, isAdmin) {

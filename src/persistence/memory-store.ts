@@ -17,6 +17,7 @@ import type {
   ServiceLink,
   ConsoleCertificate,
   ConsoleSubscription,
+  ConsoleSigner,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -52,6 +53,7 @@ export class MemoryStore implements Store {
   private consoleCertificates = new Map<string, ConsoleCertificate>();
   private consoleSubscriptions = new Map<string, ConsoleSubscription>();
   private billingEvents = new Set<string>();
+  private consoleSigners = new Map<string, ConsoleSigner>();
 
   async ready(): Promise<boolean> {
     return true;
@@ -441,7 +443,28 @@ export class MemoryStore implements Store {
     return true;
   }
 
+  async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
+    if (await this.findUserByEmail(input.email)) throw new Error("EMAIL_EXISTS");
+    const timestamp = now();
+    const user: User = { id: randomUUID(), email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash, createdAt: timestamp, updatedAt: timestamp };
+    this.users.set(user.id, user);
+    const membership: OrganizationMember = { id: randomUUID(), organizationId, userId: user.id, role: input.role, createdAt: timestamp };
+    this.memberships.set(membership.id, membership);
+    return membership;
+  }
+
+  async listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]> {
+    return [...this.consoleSigners.values()].filter((item) => item.organizationId === organizationId);
+  }
+
+  async addConsoleSigner(record: Omit<ConsoleSigner, "createdAt">): Promise<ConsoleSigner> {
+    const saved: ConsoleSigner = { ...record, createdAt: now() };
+    this.consoleSigners.set(`${record.organizationId}:${record.userId}`, saved);
+    return saved;
+  }
+
   async reset(): Promise<void> {
+    this.consoleSigners.clear();
     this.consoleSubscriptions.clear();
     this.billingEvents.clear();
     this.serviceLinks.clear();

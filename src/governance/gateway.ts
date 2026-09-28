@@ -296,6 +296,87 @@ export class GovernanceGateway {
     return result.body;
   }
 
+  // ---------- approvals (Trust Proof decisions signed by named people) ----------
+
+  private async trustProofSession(email: string, password: string, what: string): Promise<string> {
+    const { trustProofUrl } = this.requireConfigured();
+    const login = await this.call(trustProofUrl, "POST", "/auth/login", { body: { email, password } });
+    const cookie = (login.setCookie ?? "").split(";")[0];
+    if (login.status === 401 || login.status === 400) {
+      // 403, not 401: a wrong signing passphrase must not sign the person out of the console.
+      throw new AppError(403, "INVALID_PASSPHRASE", "That signing passphrase is not correct.");
+    }
+    if (login.status >= 300 || !cookie) this.fail(login, what);
+    return cookie;
+  }
+
+  // Creates a personal Trust Proof signer account for a workspace member. The passphrase becomes
+  // that account's password and locks their signing keys; it is passed through once, never stored.
+  async enrollSigner(organization: Organization, member: { id: string; name: string; email: string }, passphrase: string): Promise<string> {
+    const { trustProofUrl } = this.requireConfigured();
+    const link = await this.ensureLink(organization);
+    const admin = await this.trustProofSession(link.trustProofEmail, this.box.open(link.trustProofSecret), "Signing in to Trust Proof");
+    const result = await this.call(trustProofUrl, "POST", "/users", {
+      body: { name: member.name, email: member.email, roles: ["signer"], initialPassword: passphrase },
+      cookie: admin,
+    });
+    if (result.status === 409) {
+      throw new AppError(409, "SIGNER_EMAIL_TAKEN", "This email already has a Trust Proof signing account. Contact RootSystems to link it.");
+    }
+    if (result.status === 400) throw new AppError(400, "VALIDATION_ERROR", upstreamMessage(result.body, "The passphrase was not accepted."));
+    if (result.status >= 300) this.fail(result, "Creating the signing key");
+    return member.email.toLowerCase();
+  }
+
+  async listDecisions(organization: Organization): Promise<unknown[]> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "GET", "/api/v1/decisions", { token: await this.trustProofKey(organization) });
+    if (result.status !== 200) this.fail(result, "Listing approvals");
+    return (result.body as { decisions?: unknown[] }).decisions ?? [];
+  }
+
+  async getDecision(organization: Organization, id: string): Promise<unknown> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "GET", `/api/v1/decisions/${encodeURIComponent(id)}`, { token: await this.trustProofKey(organization) });
+    if (result.status !== 200) this.fail(result, "Reading the approval");
+    return (result.body as { decision?: unknown }).decision;
+  }
+
+  async createDecision(
+    organization: Organization,
+    input: { decisionType: string; content: string; requiredSigners: string[]; proposedBy: string; externalRef?: string },
+  ): Promise<unknown> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "POST", "/api/v1/decisions", {
+      body: { ...input, framework: "Agent Governance" },
+      token: await this.trustProofKey(organization),
+    });
+    if (result.status !== 201) this.fail(result, "Creating the approval request");
+    return (result.body as { decision?: unknown }).decision ?? result.body;
+  }
+
+  async signDecision(
+    organization: Organization,
+    signerEmail: string,
+    id: string,
+    passphrase: string,
+    decline?: { reason?: string },
+  ): Promise<unknown> {
+    const { trustProofUrl } = this.requireConfigured();
+    await this.ensureLink(organization);
+    const session = await this.trustProofSession(signerEmail, passphrase, "Signing in to Trust Proof");
+    const path = `/decisions/${encodeURIComponent(id)}/${decline ? "decline" : "sign"}`;
+    const result = await this.call(trustProofUrl, "POST", path, {
+      body: decline ? { password: passphrase, ...(decline.reason ? { reason: decline.reason } : {}) } : { password: passphrase },
+      cookie: session,
+    });
+    if (result.status === 403 || result.status === 409) {
+      throw new AppError(result.status, "SIGNING_REFUSED", upstreamMessage(result.body, "Trust Proof refused this signature."));
+    }
+    if (result.status !== 201 && result.status !== 200) this.fail(result, decline ? "Declining" : "Signing");
+    return result.body;
+  }
+
   // What an agent runtime needs to report its actions: the Trust Proof address and this workspace's
   // key. Shown only to workspace admins.
   async agentConnection(organization: Organization): Promise<{ trustProofUrl: string; apiKey: string }> {

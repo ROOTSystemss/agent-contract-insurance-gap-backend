@@ -149,6 +149,13 @@ export interface ConsoleSubscription {
   updatedAt: string;
 }
 
+export interface ConsoleSigner {
+  organizationId: string;
+  userId: string;
+  trustProofEmail: string;
+  createdAt: string;
+}
+
 export interface OrganizationMember {
   id: string;
   organizationId: string;

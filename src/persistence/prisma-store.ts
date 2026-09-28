@@ -17,6 +17,8 @@ import type {
   ServiceLink,
   ConsoleCertificate,
   ConsoleSubscription,
+  ConsoleSigner,
+  Role,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -603,8 +605,36 @@ export class PrismaStore implements Store {
     }
   }
 
+  async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
+    try {
+      const membership = await this.client.$transaction(async (database) => {
+        const user = await database.user.create({ data: { email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash } });
+        return database.organizationMember.create({ data: { organizationId, userId: user.id, role: input.role } });
+      });
+      return { ...membership, createdAt: iso(membership.createdAt) };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new Error("EMAIL_EXISTS");
+      throw error;
+    }
+  }
+
+  async listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]> {
+    const rows = await this.client.consoleSigner.findMany({ where: { organizationId } });
+    return rows.map((row) => ({ ...row, createdAt: iso(row.createdAt) }));
+  }
+
+  async addConsoleSigner(record: Omit<ConsoleSigner, "createdAt">): Promise<ConsoleSigner> {
+    const row = await this.client.consoleSigner.upsert({
+      where: { organizationId_userId: { organizationId: record.organizationId, userId: record.userId } },
+      create: record,
+      update: { trustProofEmail: record.trustProofEmail },
+    });
+    return { ...row, createdAt: iso(row.createdAt) };
+  }
+
   async reset(): Promise<void> {
     await this.client.$transaction([
+      this.client.consoleSigner.deleteMany(),
       this.client.billingWebhookEvent.deleteMany(),
       this.client.consoleSubscription.deleteMany(),
       this.client.consoleCertificate.deleteMany(),

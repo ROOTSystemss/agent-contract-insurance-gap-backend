@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import bcrypt from "bcryptjs";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Organization } from "../domain/types.js";
@@ -137,6 +139,145 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   app.get("/ledger/verify", async (request) => {
     const organization = await workspace(request);
     return success(request, await app.governance.verifyLedger(organization));
+  });
+
+  // ----- approvals: named people sign off decisions with their own Trust Proof keys -----
+
+  async function teamWithSigners(organizationId: string) {
+    const [members, signers] = await Promise.all([app.store.listMembers(organizationId), app.store.listConsoleSigners(organizationId)]);
+    const enrolled = new Map(signers.map((item) => [item.userId, item]));
+    return members.map((member) => ({
+      userId: member.userId,
+      name: member.user.name,
+      email: member.user.email,
+      role: member.role,
+      canSign: enrolled.has(member.userId),
+    }));
+  }
+
+  app.get("/team", async (request) => {
+    const organization = await workspace(request);
+    return success(request, await teamWithSigners(organization.id));
+  });
+
+  // Adds a teammate to this workspace. There is no email sending yet, so the one-time password is
+  // returned once to the admin to pass on privately; it is stored only as a bcrypt hash.
+  app.post("/team", async (request, reply) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const input = z
+      .object({ name: z.string().trim().min(2).max(100), email: z.email().max(254), role: z.enum(["admin", "analyst", "viewer"]) })
+      .parse(request.body);
+    const temporaryPassword = randomBytes(12).toString("base64url");
+    try {
+      await app.store.addMember(organization.id, { email: input.email, name: input.name, role: input.role, passwordHash: await bcrypt.hash(temporaryPassword, 12) });
+    } catch (error) {
+      if (error instanceof Error && error.message === "EMAIL_EXISTS") throw new AppError(409, "EMAIL_EXISTS", "That email already has a RootSystems account.");
+      throw error;
+    }
+    await audit(app.store, request, "organization", organization.id, "console.member_added", { role: input.role });
+    reply.header("Cache-Control", "no-store");
+    return reply.code(201).send(success(request, { email: input.email.toLowerCase(), temporaryPassword }));
+  });
+
+  app.get("/approvals", async (request) => {
+    const organization = await workspace(request);
+    const [decisions, team] = await Promise.all([app.governance.listDecisions(organization), teamWithSigners(organization.id)]);
+    const me = team.find((member) => member.userId === actor(request).userId);
+    return success(request, { decisions, team, me: me ?? null });
+  });
+
+  app.get("/approvals/:id", async (request) => {
+    const organization = await workspace(request);
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
+    return success(request, await app.governance.getDecision(organization, String(id)));
+  });
+
+  // Sets up the current member's personal signing key. The passphrase is never stored here.
+  app.post("/signing-key", async (request) => {
+    const organization = await workspace(request);
+    const { passphrase } = z.object({ passphrase: z.string().min(10).max(200) }).parse(request.body);
+    const user = await app.store.getUser(actor(request).userId);
+    if (!user) throw notFound("User");
+    const already = (await app.store.listConsoleSigners(organization.id)).some((item) => item.userId === user.id);
+    if (already) throw new AppError(409, "ALREADY_ENROLLED", "You already have a signing key in this workspace.");
+    const email = await app.governance.enrollSigner(organization, { id: user.id, name: user.name, email: user.email }, passphrase);
+    await app.store.addConsoleSigner({ organizationId: organization.id, userId: user.id, trustProofEmail: email });
+    await audit(app.store, request, "user", user.id, "console.signing_key_created");
+    return success(request, { canSign: true });
+  });
+
+  app.post("/approvals", async (request, reply) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    const input = z
+      .object({
+        title: z.string().trim().min(3).max(200),
+        details: z.string().trim().min(3).max(20000),
+        signerUserIds: z.array(z.string().uuid()).min(1).max(20),
+        reference: z.string().trim().max(200).optional(),
+      })
+      .parse(request.body);
+    const me = actor(request).userId;
+    if (input.signerUserIds.includes(me)) {
+      throw new AppError(400, "SELF_APPROVAL", "You cannot be a required signer on your own request.");
+    }
+    const signers = await app.store.listConsoleSigners(organization.id);
+    const emails = input.signerUserIds.map((id) => signers.find((item) => item.userId === id)?.trustProofEmail);
+    if (emails.some((email) => !email)) {
+      throw new AppError(400, "SIGNER_NOT_READY", "Every signer must first set up their signing key (Approvals → Set up signing).");
+    }
+    const proposer = await app.store.getUser(me);
+    const decision = await app.governance.createDecision(organization, {
+      decisionType: input.title,
+      content: input.details,
+      requiredSigners: emails as string[],
+      proposedBy: proposer?.email ?? me,
+      ...(input.reference ? { externalRef: input.reference } : {}),
+    });
+    await audit(app.store, request, "organization", organization.id, "console.approval_requested", { signers: emails.length });
+    return reply.code(201).send(success(request, decision));
+  });
+
+  async function signOrDecline(request: FastifyRequest, decline: boolean) {
+    const organization = await workspace(request);
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
+    const body = z.object({ passphrase: z.string().min(1).max(200), reason: z.string().trim().max(2000).optional() }).parse(request.body);
+    const signer = (await app.store.listConsoleSigners(organization.id)).find((item) => item.userId === actor(request).userId);
+    if (!signer) throw new AppError(400, "SIGNER_NOT_READY", "Set up your signing key first.");
+    const result = await app.governance.signDecision(organization, signer.trustProofEmail, String(id), body.passphrase, decline ? { reason: body.reason } : undefined);
+    await audit(app.store, request, "organization", organization.id, decline ? "console.approval_declined" : "console.approval_signed", { decisionId: id });
+    return success(request, result);
+  }
+  app.post("/approvals/:id/sign", async (request) => signOrDecline(request, false));
+  app.post("/approvals/:id/decline", async (request) => signOrDecline(request, true));
+
+  // Coverage summary for the console: every project with its analyses (newest first) and each
+  // analysis's attention level. Editing and running analyses stay in the coverage workspace.
+  app.get("/coverage", async (request) => {
+    const orgId = actor(request).organizationId;
+    const projects = await app.store.listProjects(orgId, { page: 1, pageSize: 50 });
+    const agentNames = new Map<string, string>();
+    const items = [];
+    for (const project of projects.items) {
+      const analyses = await app.store.listAnalyses(orgId, project.id, { page: 1, pageSize: 20 });
+      const rows = [];
+      for (const analysis of analyses.items) {
+        if (!agentNames.has(analysis.agentProfileId)) {
+          agentNames.set(analysis.agentProfileId, (await app.store.getAgent(orgId, analysis.agentProfileId))?.name ?? "Agent");
+        }
+        rows.push({
+          id: analysis.id,
+          state: analysis.state,
+          agentName: agentNames.get(analysis.agentProfileId),
+          attention: analysis.attentionScore ? { score: analysis.attentionScore.score, label: analysis.attentionScore.label } : null,
+          createdAt: analysis.createdAt,
+          completedAt: analysis.completedAt,
+        });
+      }
+      items.push({ id: project.id, name: project.name, analyses: rows });
+    }
+    return success(request, { projects: items, truncated: projects.total > projects.items.length });
   });
 
   app.get("/billing", async (request) => {

@@ -74,6 +74,7 @@ model Organization {
   serviceLink ServiceLink?
   consoleCertificates ConsoleCertificate[]
   consoleSubscription ConsoleSubscription?
+  consoleSigners      ConsoleSigner[]
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 }
@@ -315,4 +316,16 @@ model BillingWebhookEvent {
   id        String   @id
   type      String
   createdAt DateTime @default(now())
+}
+
+// Workspace members who set up a personal Trust Proof signing key through the console. Their
+// signing passphrase is never stored; it unlocks their key in Trust Proof each time they sign.
+model ConsoleSigner {
+  organizationId  String       @db.Uuid
+  userId          String       @db.Uuid
+  trustProofEmail String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt       DateTime     @default(now())
+
+  @@id([organizationId, userId])
 }
