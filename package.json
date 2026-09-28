@@ -43,6 +43,7 @@
     "@noble/post-quantum": "0.7.1",
     "@prisma/client": "^6.12.0",
     "bcryptjs": "^3.0.2",
+    "dodopayments": "^2.48.0",
     "fastify": "^5.6.1",
     "fastify-plugin": "^5.1.0",
     "mammoth": "^1.10.0",

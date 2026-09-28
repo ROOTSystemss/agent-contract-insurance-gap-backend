@@ -137,6 +137,18 @@ export interface ConsoleCertificate {
   createdAt: string;
 }
 
+// Agent Governance console plan, mirrored from Dodo Payments webhooks. No record = free plan.
+export interface ConsoleSubscription {
+  organizationId: string;
+  plan: string;
+  status: string;
+  dodoCustomerId: string | null;
+  dodoSubscriptionId: string | null;
+  renewsAt: string | null;
+  lastEventAt: string | null;
+  updatedAt: string;
+}
+
 export interface OrganizationMember {
   id: string;
   organizationId: string;

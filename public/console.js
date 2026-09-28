@@ -633,7 +633,11 @@
             openCertDrawer({ jti: res.jti, agentId: res.agentId, agentName: f.agentName.value.trim(), permissions: perms, limits: limits(), status: "active", issuedAt: new Date().toISOString(), expiresAt: res.expiresAt }, state.refreshAgents);
           }, 250);
         })
-        .catch(function (err) { issueBtn.disabled = false; toast(err.message, true); });
+        .catch(function (err) {
+          issueBtn.disabled = false;
+          toast(err.message, true);
+          if (err.code === "PLAN_LIMIT_REACHED") { d.close(); location.hash = "#/settings"; }
+        });
     });
     f.agentName.focus();
   }
@@ -729,7 +733,12 @@
       }).catch(function (err) { reveal.disabled = false; toast(err.message, true); });
     });
     copyBtn.addEventListener("click", function () { if (revealed) copy(revealed.apiKey, "API key"); });
-    content.appendChild(h("div", { class: "grid", style: "max-width:880px" },
+    var billingHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
+    loadBilling(billingHost, isAdmin);
+    content.appendChild(h("div", { class: "grid", style: "max-width:980px" },
+      h("div", { class: "panel" },
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Plan & billing" }), h("p", { text: "Priced per workspace. Payments by Dodo Payments; cancel any time." }))),
+        billingHost),
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Connect your agent" }), h("p", { text: "Your runtime reports each action with this workspace's Trust Proof key and the agent's certificate." }))),
         h("div", { class: "panel__body", style: "display:grid;gap:16px" },
@@ -751,6 +760,38 @@
           h("a", { class: "btn", href: "https://rootsystems.app/dpa", target: "_blank", rel: "noopener" }, "Data Processing Agreement"),
           h("a", { class: "btn", href: "https://rootsystems.app/privacy", target: "_blank", rel: "noopener" }, "Privacy"),
           h("button", { class: "btn btn--ghost", onclick: function () { signOut(false); } }, icon("logout"), "Sign out")))));
+  }
+
+  function loadBilling(host, isAdmin) {
+    api("/console/billing").then(function (b) {
+      clear(host);
+      var statusNote = b.status === "on_hold" ? "Your last payment did not go through. Dodo is retrying; update your card to keep your plan."
+        : b.renewsAt ? "Renews " + date(b.renewsAt) + "." : b.plan.id === "free" ? "You are on the free trial." : "";
+      host.appendChild(h("div", { class: "plans" }, b.plans.map(function (p) {
+        var current = p.id === b.plan.id;
+        var action = null;
+        if (!current && p.id !== "free") {
+          if (!b.checkoutAvailable) action = h("a", { class: "btn btn--sm", href: "https://rootsystems.app/contact", target: "_blank", rel: "noopener" }, "Talk to us");
+          else if (!isAdmin) action = h("span", { class: "faint", style: "font-size:12px", text: "Ask a workspace admin to upgrade" });
+          else {
+            action = h("button", { class: "btn btn--primary btn--sm" }, "Upgrade to " + p.name);
+            action.addEventListener("click", function () {
+              action.disabled = true;
+              api("/console/billing/checkout", { method: "POST", body: { plan: p.id } })
+                .then(function (r) { location.href = r.url; })
+                .catch(function (err) { action.disabled = false; toast(err.message, true); });
+            });
+          }
+        }
+        return h("div", { class: "plan" + (current ? " is-current" : "") },
+          h("div", { class: "plan__name" }, p.name, current ? h("span", { class: "pill pill--active", text: "current" }) : null),
+          h("div", { class: "plan__price" }, p.priceUsdMonthly ? "$" + p.priceUsdMonthly : "Free", p.priceUsdMonthly ? h("span", { text: " / month" }) : null),
+          h("div", { class: "plan__limit", text: "Up to " + p.activeCertificates + " active agents" }),
+          h("p", { class: "plan__summary", text: p.summary }),
+          action);
+      })));
+      if (statusNote) host.appendChild(h("p", { class: "faint", style: "margin:14px 0 0;font-size:12.5px", text: statusNote }));
+    }).catch(function (err) { clear(host); toast(err.message, true); });
   }
 
   // ---------- command palette ----------

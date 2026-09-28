@@ -16,11 +16,19 @@ import type {
   User,
   ServiceLink,
   ConsoleCertificate,
+  ConsoleSubscription,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
 const iso = (date: Date): string => date.toISOString();
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
+
+function subscriptionRow(row: {
+  organizationId: string; plan: string; status: string; dodoCustomerId: string | null; dodoSubscriptionId: string | null;
+  renewsAt: Date | null; lastEventAt: Date | null; updatedAt: Date;
+}): ConsoleSubscription {
+  return { ...row, renewsAt: row.renewsAt ? iso(row.renewsAt) : null, lastEventAt: row.lastEventAt ? iso(row.lastEventAt) : null, updatedAt: iso(row.updatedAt) };
+}
 
 export class PrismaStore implements Store {
   constructor(readonly client = new PrismaClient()) {}
@@ -563,8 +571,42 @@ export class PrismaStore implements Store {
     return row ? { ...row, pqSignature: row.pqSignature ?? null, createdAt: iso(row.createdAt) } : null;
   }
 
+  async getConsoleSubscription(organizationId: string): Promise<ConsoleSubscription | null> {
+    const row = await this.client.consoleSubscription.findUnique({ where: { organizationId } });
+    return row ? subscriptionRow(row) : null;
+  }
+
+  async saveConsoleSubscription(record: Omit<ConsoleSubscription, "updatedAt">): Promise<ConsoleSubscription> {
+    const data = {
+      plan: record.plan,
+      status: record.status,
+      dodoCustomerId: record.dodoCustomerId,
+      dodoSubscriptionId: record.dodoSubscriptionId,
+      renewsAt: record.renewsAt ? new Date(record.renewsAt) : null,
+      lastEventAt: record.lastEventAt ? new Date(record.lastEventAt) : null,
+    };
+    const row = await this.client.consoleSubscription.upsert({
+      where: { organizationId: record.organizationId },
+      create: { organizationId: record.organizationId, ...data },
+      update: data,
+    });
+    return subscriptionRow(row);
+  }
+
+  async claimBillingWebhookEvent(id: string, type: string): Promise<boolean> {
+    try {
+      await this.client.billingWebhookEvent.create({ data: { id, type } });
+      return true;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return false;
+      throw error;
+    }
+  }
+
   async reset(): Promise<void> {
     await this.client.$transaction([
+      this.client.billingWebhookEvent.deleteMany(),
+      this.client.consoleSubscription.deleteMany(),
       this.client.consoleCertificate.deleteMany(),
       this.client.serviceLink.deleteMany(),
       this.client.auditEvent.deleteMany(),

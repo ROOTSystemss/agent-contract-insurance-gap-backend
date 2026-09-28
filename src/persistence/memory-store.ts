@@ -16,6 +16,7 @@ import type {
   Role,
   ServiceLink,
   ConsoleCertificate,
+  ConsoleSubscription,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -49,6 +50,8 @@ export class MemoryStore implements Store {
   private auditEvents = new Map<string, AuditEvent>();
   private serviceLinks = new Map<string, ServiceLink>();
   private consoleCertificates = new Map<string, ConsoleCertificate>();
+  private consoleSubscriptions = new Map<string, ConsoleSubscription>();
+  private billingEvents = new Set<string>();
 
   async ready(): Promise<boolean> {
     return true;
@@ -422,7 +425,25 @@ export class MemoryStore implements Store {
     return record && record.organizationId === organizationId ? record : null;
   }
 
+  async getConsoleSubscription(organizationId: string): Promise<ConsoleSubscription | null> {
+    return this.consoleSubscriptions.get(organizationId) ?? null;
+  }
+
+  async saveConsoleSubscription(record: Omit<ConsoleSubscription, "updatedAt">): Promise<ConsoleSubscription> {
+    const saved: ConsoleSubscription = { ...record, updatedAt: now() };
+    this.consoleSubscriptions.set(record.organizationId, saved);
+    return saved;
+  }
+
+  async claimBillingWebhookEvent(id: string): Promise<boolean> {
+    if (this.billingEvents.has(id)) return false;
+    this.billingEvents.add(id);
+    return true;
+  }
+
   async reset(): Promise<void> {
+    this.consoleSubscriptions.clear();
+    this.billingEvents.clear();
     this.serviceLinks.clear();
     this.consoleCertificates.clear();
     this.users.clear();

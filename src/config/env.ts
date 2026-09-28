@@ -58,6 +58,15 @@ const envSchema = z
     // Shared with Authority Atlas and Trust Proof (same value on all three): lets the console create one
     // identity/organization per workspace from this single server without hitting per-IP signup limits.
     CONSOLE_SERVICE_TOKEN: z.string().min(32).optional(),
+    // Agent Governance console billing (Dodo Payments). Without the key and both product ids, the
+    // console runs on the free trial plan only and checkout answers 503.
+    DODO_PAYMENTS_API_KEY: z.string().optional(),
+    DODO_ENVIRONMENT: z.enum(["live_mode", "test_mode"]).default("test_mode"),
+    DODO_PAYMENTS_WEBHOOK_KEY: z.string().optional(),
+    DODO_PRODUCT_ID_TEAM: z.string().optional(),
+    DODO_PRODUCT_ID_BUSINESS: z.string().optional(),
+    // Public address of this service, used for the checkout return link.
+    PUBLIC_BASE_URL: z.string().url().default("http://localhost:4400"),
     // 32 random bytes, base64: the ML-DSA-65 key that signs Assurance Packs. Optional; without it packs
     // are not signed and say so. Never change it once set (the published key would change).
     PQ_SIGNING_SEED: z.string().optional(),

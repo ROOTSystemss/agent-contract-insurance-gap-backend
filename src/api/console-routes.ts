@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Organization } from "../domain/types.js";
-import { notFound } from "../shared/errors.js";
+import { AppError, notFound } from "../shared/errors.js";
+import { PLANS } from "../governance/billing.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 
 // Agent Governance console API. One workspace login reaches the whole Floor 3 chain: certificates
@@ -98,6 +99,16 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     requireRole(request, "analyst");
     const organization = await workspace(request);
     const input = issueBody.parse(request.body);
+    // Plan limit: active certificates at once (revoked and expired ones do not count).
+    const { plan } = await app.billing.current(organization.id);
+    const active = (await app.governance.listCertificates(organization)).filter((item) => item.status === "active").length;
+    if (active >= plan.activeCertificates) {
+      throw new AppError(
+        402,
+        "PLAN_LIMIT_REACHED",
+        `The ${plan.name} plan allows ${plan.activeCertificates} active agent certificates. Revoke one or upgrade in Settings.`,
+      );
+    }
     const issued = await app.governance.issueCertificate(organization, input);
     await audit(app.store, request, "certificate", issued.jti, "console.certificate_issued", { agentId: issued.agentId });
     return reply.code(201).send(success(request, issued));
@@ -126,6 +137,29 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   app.get("/ledger/verify", async (request) => {
     const organization = await workspace(request);
     return success(request, await app.governance.verifyLedger(organization));
+  });
+
+  app.get("/billing", async (request) => {
+    const organization = await workspace(request);
+    const { plan, subscription } = await app.billing.current(organization.id);
+    return success(request, {
+      plan,
+      status: subscription?.status ?? "free",
+      renewsAt: subscription?.renewsAt ?? null,
+      plans: Object.values(PLANS),
+      checkoutAvailable: app.billing.configured(),
+    });
+  });
+
+  app.post("/billing/checkout", async (request) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { plan } = z.object({ plan: z.enum(["team", "business"]) }).parse(request.body);
+    const user = await app.store.getUser(actor(request).userId);
+    if (!user) throw notFound("User");
+    const url = await app.billing.checkout(organization, user.email, plan);
+    await audit(app.store, request, "organization", organization.id, "console.checkout_started", { plan });
+    return success(request, { url });
   });
 
   // The Trust Proof key an agent runtime uses to report actions. Admins only; never logged.

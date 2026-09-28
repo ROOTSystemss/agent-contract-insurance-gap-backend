@@ -13,6 +13,8 @@ import { auditRoutes } from "./api/audit-routes.js";
 import { createAtlasVerifier, type CertificateVerifier } from "./authority/certificate.js";
 import { GovernanceGateway, type GatewayOptions } from "./governance/gateway.js";
 import { SecretBox } from "./governance/secret-box.js";
+import { ConsoleBilling } from "./governance/billing.js";
+import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
@@ -126,6 +128,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         ...options.governance,
       },
     ),
+  );
+  app.decorate(
+    "billing",
+    new ConsoleBilling(store, {
+      apiKey: config.DODO_PAYMENTS_API_KEY ?? null,
+      environment: config.DODO_ENVIRONMENT,
+      webhookKey: config.DODO_PAYMENTS_WEBHOOK_KEY ?? null,
+      productIds: { team: config.DODO_PRODUCT_ID_TEAM ?? null, business: config.DODO_PRODUCT_ID_BUSINESS ?? null },
+      returnUrl: `${new URL(config.PUBLIC_BASE_URL).origin}/console#/settings`,
+    }),
   );
   app.decorate("pqSigner", options.pqSigner !== undefined ? options.pqSigner : createPqSigner(config.PQ_SIGNING_SEED));
   app.decorateRequest("actor", null);
@@ -353,6 +365,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(findingRoutes, { prefix: "/api/v1/findings" });
   await app.register(auditRoutes, { prefix: "/api/v1/projects" });
   await app.register(consoleRoutes, { prefix: "/api/v1/console" });
+  await app.register(billingWebhookRoutes, { prefix: "/api/v1/billing" });
 
   return app;
 }

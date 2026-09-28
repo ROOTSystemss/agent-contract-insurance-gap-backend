@@ -100,12 +100,17 @@ try {
   check("certificate issued through the console (201)", r.status === 201 && typeof issued?.certificate === "string" && typeof issued?.jti === "string", `${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
   check("issued certificate carries the ML-DSA-65 countersignature", typeof issued?.pqSignature?.value === "string");
 
+  // Free trial plan: 2 active certificates.
+  r = await call(GAP, "POST", "/api/v1/console/certificates", { token: a, body: { agentId: "second-bot", agentName: "Second", permissions: ["email:send"], expiresInDays: 7 } });
+  check("second certificate fits the free plan", r.status === 201, r.status);
+  r = await call(GAP, "POST", "/api/v1/console/certificates", { token: a, body: { agentId: "third-bot", agentName: "Third", permissions: ["email:send"], expiresInDays: 7 } });
+  check("third active certificate refused on the free plan (402)", r.status === 402 && r.json?.error?.code === "PLAN_LIMIT_REACHED", `${r.status} ${JSON.stringify(r.json).slice(0, 150)}`);
   r = await call(GAP, "POST", "/api/v1/console/certificates", { token: a, body: { agentId: "bad bot!", agentName: "x", permissions: ["nope nope"] } });
   check("invalid certificate input rejected with a clear message (400)", r.status === 400, r.status);
 
   r = await call(GAP, "GET", "/api/v1/console/certificates", { token: a });
   const listed = r.json?.data ?? [];
-  check("certificate list shows it as active with its permissions", listed.length === 1 && listed[0].status === "active" && listed[0].permissions?.length === 2, JSON.stringify(r.json).slice(0, 200));
+  check("certificate list shows both, newest first, with permissions", listed.length === 2 && listed[1].agentId === "pay-bot" && listed[1].status === "active" && listed[1].permissions?.length === 2, JSON.stringify(r.json).slice(0, 200));
 
   r = await call(GAP, "GET", `/api/v1/console/certificates/${issued.jti}/verify`, { token: a });
   const v = r.json?.data?.verification;
@@ -129,7 +134,7 @@ try {
 
   r = await call(GAP, "GET", "/api/v1/console/overview", { token: a });
   const o = r.json?.data;
-  check("overview: 1 active certificate, 3 actions, 2 blocked", o?.certificates?.active === 1 && o?.ledger?.total === 3 && o?.ledger?.blocked === 2 && o?.latest?.length === 3, JSON.stringify(o).slice(0, 250));
+  check("overview: 2 active certificates, 3 actions, 2 blocked", o?.certificates?.active === 2 && o?.ledger?.total === 3 && o?.ledger?.blocked === 2 && o?.latest?.length === 3, JSON.stringify(o).slice(0, 250));
 
   r = await call(GAP, "GET", "/api/v1/console/ledger/verify", { token: a });
   check("ledger chain verifies and the checkpoint is ML-DSA-65 signed", r.json?.data?.valid === true && r.json?.data?.signature?.algorithm === "ML-DSA-65", JSON.stringify(r.json).slice(0, 200));
@@ -159,7 +164,7 @@ try {
   r = await call(GAP, "POST", `/api/v1/console/certificates/${issued.jti}/revoke`, { token: a });
   check("owner revokes the certificate", r.status === 200 && typeof r.json?.data?.revokedAt === "string", `${r.status} ${JSON.stringify(r.json).slice(0, 150)}`);
   r = await call(GAP, "GET", "/api/v1/console/certificates", { token: a });
-  check("list now shows it revoked", r.json?.data?.[0]?.status === "revoked");
+  check("list now shows it revoked", r.json?.data?.find((c) => c.jti === issued.jti)?.status === "revoked");
   r = await act({ action: "invoices:pay", amountUsd: 50 });
   check("a money action with the revoked certificate is blocked at once", r.json?.allowed === false, JSON.stringify(r.json).slice(0, 150));
 } catch (error) {

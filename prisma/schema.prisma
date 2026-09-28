@@ -73,6 +73,7 @@ model Organization {
   auditEvents AuditEvent[]
   serviceLink ServiceLink?
   consoleCertificates ConsoleCertificate[]
+  consoleSubscription ConsoleSubscription?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 }
@@ -294,4 +295,24 @@ model ConsoleCertificate {
   createdAt      DateTime     @default(now())
 
   @@index([organizationId, createdAt])
+}
+
+// Agent Governance console plan (Dodo Payments). Absent = free plan.
+model ConsoleSubscription {
+  organizationId      String       @id @db.Uuid
+  plan                String
+  status              String
+  dodoCustomerId      String?
+  dodoSubscriptionId  String?
+  renewsAt            DateTime?
+  lastEventAt         DateTime?
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedAt           DateTime     @updatedAt
+}
+
+// Dodo webhook ids already processed, so a redelivered event is a no-op.
+model BillingWebhookEvent {
+  id        String   @id
+  type      String
+  createdAt DateTime @default(now())
 }

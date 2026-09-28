@@ -15,6 +15,7 @@ import type {
   Role,
   ServiceLink,
   ConsoleCertificate,
+  ConsoleSubscription,
   User,
 } from "../domain/types.js";
 
@@ -119,6 +120,10 @@ export interface Store {
   saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink>;
   addConsoleCertificate(record: Omit<ConsoleCertificate, "createdAt">): Promise<ConsoleCertificate>;
   getConsoleCertificate(organizationId: string, jti: string): Promise<ConsoleCertificate | null>;
+  getConsoleSubscription(organizationId: string): Promise<ConsoleSubscription | null>;
+  saveConsoleSubscription(record: Omit<ConsoleSubscription, "updatedAt">): Promise<ConsoleSubscription>;
+  // true the first time an event id is seen, false for a redelivery
+  claimBillingWebhookEvent(id: string, type: string): Promise<boolean>;
   reset(): Promise<void>;
 }
 
