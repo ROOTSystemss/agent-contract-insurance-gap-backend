@@ -90,8 +90,8 @@ describe("console API", () => {
   it("reports when Atlas and Trust Proof are not configured", async () => {
     const response = await app.inject({ method: "GET", url: "/api/v1/console/status", headers: { authorization: `Bearer ${ownerToken}` } });
     expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.payload) as { data: { configured: { atlas: boolean; trustProof: boolean }; linked: boolean } };
-    expect(body.data.configured).toEqual({ atlas: false, trustProof: false });
+    const body = JSON.parse(response.payload) as { data: { configured: { atlas: boolean; trustProof: boolean; serviceToken: boolean }; linked: boolean } };
+    expect(body.data.configured).toEqual({ atlas: false, trustProof: false, serviceToken: false });
     expect(body.data.linked).toBe(false);
   });
 

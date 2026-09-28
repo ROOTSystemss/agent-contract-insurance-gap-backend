@@ -100,8 +100,9 @@ export class GovernanceGateway {
     return this.options.trustProofUrl;
   }
 
-  status(): { atlas: boolean; trustProof: boolean } {
-    return { atlas: Boolean(this.options.atlasUrl), trustProof: Boolean(this.options.trustProofUrl) };
+  status(): { atlas: boolean; trustProof: boolean; serviceToken: boolean } {
+    // serviceToken says only whether it is configured, never its value.
+    return { atlas: Boolean(this.options.atlasUrl), trustProof: Boolean(this.options.trustProofUrl), serviceToken: Boolean(this.options.serviceToken) };
   }
 
   // ---------- plumbing ----------
