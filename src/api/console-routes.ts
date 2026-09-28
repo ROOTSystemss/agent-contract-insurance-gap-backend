@@ -45,7 +45,13 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   app.get("/status", async (request) => {
     const organization = await workspace(request);
     const linked = Boolean(await app.store.getServiceLink(organization.id));
-    return success(request, { configured: app.governance.status(), linked, workspace: { id: organization.id, name: organization.name } });
+    return success(request, {
+      configured: app.governance.status(),
+      linked,
+      workspace: { id: organization.id, name: organization.name },
+      // Public service address shown in Settings (the key itself is only in /connection).
+      trustProofUrl: app.governance.trustProofUrl(),
+    });
   });
 
   // Links the workspace to Atlas and Trust Proof (first use only; later calls are no-ops).

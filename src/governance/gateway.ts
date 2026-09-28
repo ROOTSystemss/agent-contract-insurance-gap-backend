@@ -94,6 +94,10 @@ export class GovernanceGateway {
     this.accountDomain = options.accountDomain ?? "console.rootsystems.app";
   }
 
+  trustProofUrl(): string | null {
+    return this.options.trustProofUrl;
+  }
+
   status(): { atlas: boolean; trustProof: boolean } {
     return { atlas: Boolean(this.options.atlasUrl), trustProof: Boolean(this.options.trustProofUrl) };
   }

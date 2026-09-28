@@ -205,7 +205,7 @@ function authView() {
             <div class="field full"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" required minlength="${register ? 12 : 1}" placeholder="${register ? "At least 12 characters" : "Your password"}" /></div>
             <div class="field full"><button class="button button-primary button-block" type="submit">${register ? "Create secure workspace" : "Sign in"}<span>→</span></button><p id="auth-message" class="form-message"></p></div>
           </form>
-          <p class="small muted">Your documents remain private to this workspace. For local testing, data resets when the server stops.</p>
+          <p class="small muted">Your documents stay private to this workspace and are encrypted at rest.</p>
         </div>
       </section>
     </main>`;
