@@ -12,6 +12,12 @@
       "path": "scripts/certificate-e2e.mjs",
       "reason": "End-to-end script that verifies Authority Atlas ES256 certificates (the classical half of Atlas's hybrid signature); it does not sign anything.",
       "expires": "2027-09-27"
+    },
+    {
+      "ruleId": "QF-ALG-ECC",
+      "path": "scripts/console-e2e.mjs",
+      "reason": "Local end-to-end script that generates a throwaway P-256 key for a local Authority Atlas test instance (Atlas's classical ES256 half); the key lives only for the test run and never signs real records.",
+      "expires": "2027-09-27"
     }
   ]
 }
