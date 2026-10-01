@@ -141,6 +141,41 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     return success(request, await app.governance.verifyLedger(organization));
   });
 
+  // ----- alerts: Trust Proof webhooks fired when an agent acts outside its authority -----
+
+  const webhookParams = z.object({ id: z.coerce.number().int().positive() });
+
+  app.get("/alerts", async (request) => {
+    const organization = await workspace(request);
+    return success(request, await app.governance.listWebhooks(organization));
+  });
+
+  app.post("/alerts", async (request, reply) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { url } = z.object({ url: z.string().trim().min(8).max(2000) }).parse(request.body);
+    const created = await app.governance.createWebhook(organization, url);
+    await audit(app.store, request, "organization", organization.id, "console.alert_added");
+    reply.header("Cache-Control", "no-store");
+    return reply.code(201).send(success(request, created));
+  });
+
+  app.delete("/alerts/:id", async (request) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { id } = webhookParams.parse(request.params);
+    await app.governance.deleteWebhook(organization, id);
+    await audit(app.store, request, "organization", organization.id, "console.alert_deleted", { webhookId: id });
+    return success(request, { deleted: true });
+  });
+
+  app.post("/alerts/:id/test", async (request) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    const { id } = webhookParams.parse(request.params);
+    return success(request, await app.governance.testWebhook(organization, id));
+  });
+
   // ----- approvals: named people sign off decisions with their own Trust Proof keys -----
 
   async function teamWithSigners(organizationId: string) {

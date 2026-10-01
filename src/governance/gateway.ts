@@ -60,6 +60,13 @@ export interface LedgerAction {
   [key: string]: unknown;
 }
 
+export interface WebhookView {
+  id: number;
+  url: string;
+  events: string[];
+  createdAt: string;
+}
+
 const ATLAS_CLIENT_ID = "agent-governance-console";
 const TOKEN_REUSE_MS = 55 * 60 * 1000; // Atlas identity tokens last one hour.
 
@@ -72,7 +79,7 @@ interface UpstreamResult {
 function upstreamMessage(body: unknown, fallback: string): string {
   if (body && typeof body === "object") {
     const record = body as Record<string, unknown>;
-    for (const key of ["error", "message"]) {
+    for (const key of ["message", "error"]) {
       if (typeof record[key] === "string") return record[key];
     }
   }
@@ -295,6 +302,36 @@ export class GovernanceGateway {
     const result = await this.call(trustProofUrl, "GET", "/api/v1/agent-actions/verify-chain", { token: await this.trustProofKey(organization) });
     if (result.status !== 200) this.fail(result, "Verifying the action ledger");
     return result.body;
+  }
+
+  // ---------- alerts (Trust Proof webhooks for outside-authority actions) ----------
+
+  async listWebhooks(organization: Organization): Promise<WebhookView[]> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "GET", "/api/v1/webhooks", { token: await this.trustProofKey(organization) });
+    if (result.status !== 200) this.fail(result, "Listing Trust Proof alerts");
+    return (result.body as { webhooks?: WebhookView[] }).webhooks ?? [];
+  }
+
+  // The signing secret comes back once here and is never stored by this service.
+  async createWebhook(organization: Organization, url: string): Promise<{ webhook: WebhookView; secret: string; note?: string }> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "POST", "/api/v1/webhooks", { body: { url }, token: await this.trustProofKey(organization) });
+    if (result.status !== 201) this.fail(result, "Adding the Trust Proof alert");
+    return result.body as { webhook: WebhookView; secret: string; note?: string };
+  }
+
+  async deleteWebhook(organization: Organization, id: number): Promise<void> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "DELETE", `/api/v1/webhooks/${id}`, { token: await this.trustProofKey(organization) });
+    if (result.status !== 204 && result.status !== 200) this.fail(result, "Deleting the Trust Proof alert");
+  }
+
+  async testWebhook(organization: Organization, id: number): Promise<{ delivered: boolean; status: number | null; error: string | null }> {
+    const { trustProofUrl } = this.requireConfigured();
+    const result = await this.call(trustProofUrl, "POST", `/api/v1/webhooks/${id}/test`, { token: await this.trustProofKey(organization) });
+    if (result.status !== 200) this.fail(result, "Sending the Trust Proof test alert");
+    return result.body as { delivered: boolean; status: number | null; error: string | null };
   }
 
   // ---------- approvals (Trust Proof decisions signed by named people) ----------

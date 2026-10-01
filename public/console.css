@@ -411,3 +411,11 @@ table.data tbody tr.clickable:hover { background: rgba(243, 234, 217, 0.03); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.alert-row__url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cream); }
+.alert-row .btn--sm { flex: 0 0 auto; }
+.alert-row small { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 560px) {
+  .alert-row { flex-wrap: wrap; }
+  .alert-row__url { flex: 1 1 100%; white-space: normal; overflow-wrap: anywhere; }
+  .alert-row small { margin-left: 0; }
+}

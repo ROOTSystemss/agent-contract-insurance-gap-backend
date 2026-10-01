@@ -935,6 +935,8 @@
     loadBilling(billingHost, isAdmin);
     var teamHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
     loadTeam(teamHost, isAdmin);
+    var alertsHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
+    loadAlerts(alertsHost, isAdmin, Boolean(state.me && state.me.role !== "viewer"));
     var teamPanel = h("div", { class: "panel" },
       h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Team" }), h("p", { text: "Everyone here shares this workspace. Approvers sign with their own keys." }))),
       teamHost);
@@ -951,6 +953,9 @@
             isAdmin ? h("div", { class: "secret" }, keyInput, reveal, copyBtn) : h("p", { class: "muted", text: "Only workspace owners and admins can view the key." }),
             h("small", { text: "Keep it in your runtime's secret store. Viewing it is recorded in the audit log." })),
           code)),
+      h("div", { class: "panel" },
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Alerts" }), h("p", { text: "Trust Proof calls your HTTPS address whenever an agent tries something outside its authority." }))),
+        alertsHost),
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Signing & evidence" }), h("p", { text: "How the evidence from this workspace can be checked." }))),
         h("div", { class: "panel__body" }, h("ul", { class: "verify-list" },
@@ -999,6 +1004,71 @@
       h("p", { text: "Send " + email + " this one-time password privately (not in the same message as the email). It is shown only now." }),
       h("div", { class: "secret", style: "margin-bottom:18px" }, h("input", { class: "input mono", readonly: true, value: password, "aria-label": "One-time password" }), h("button", { class: "btn", onclick: function () { copy(password, "Password"); } }, icon("copy"), "Copy")),
       h("div", { class: "modal__actions" }, h("button", { class: "btn btn--primary", onclick: close, text: "Done" }))]);
+    document.body.appendChild(scrim); document.body.appendChild(modal);
+  }
+
+  var MAX_ALERTS = 5; // Trust Proof's per-organization webhook limit
+  function loadAlerts(host, isAdmin, canTest) {
+    api("/console/alerts").then(function (hooks) {
+      clear(host);
+      if (!hooks.length) {
+        host.appendChild(h("p", { class: "muted", style: "margin:0", text: "No alerts yet." + (isAdmin ? " Add an address below." : " A workspace admin can add one.") }));
+      } else {
+        host.appendChild(h("ul", { class: "verify-list" }, hooks.map(function (w) {
+          var status = h("small", { text: "added " + date(w.createdAt) });
+          var test = canTest ? h("button", { class: "btn btn--sm" }, "Send test") : null;
+          if (test) test.addEventListener("click", function () {
+            test.disabled = true;
+            api("/console/alerts/" + w.id + "/test", { method: "POST" }).then(function (r) {
+              test.disabled = false;
+              status.textContent = r.delivered ? "test delivered (" + r.status + ")" : "test failed: " + (r.error || "no answer");
+              toast(r.delivered ? "Test alert delivered" : "Test alert was not delivered", !r.delivered);
+            }).catch(function (err) { test.disabled = false; toast(err.message, true); });
+          });
+          var del = isAdmin ? h("button", { class: "btn btn--ghost btn--sm", "aria-label": "Delete alert " + w.url }, icon("x")) : null;
+          if (del) del.addEventListener("click", function () {
+            if (!window.confirm("Stop sending alerts to " + w.url + "?")) return;
+            del.disabled = true;
+            api("/console/alerts/" + w.id, { method: "DELETE" }).then(function () {
+              toast("Alert deleted");
+              loadAlerts(host, isAdmin, canTest);
+            }).catch(function (err) { del.disabled = false; toast(err.message, true); });
+          });
+          return h("li", { class: "ok alert-row" }, icon("bolt"), h("span", { class: "mono alert-row__url", text: w.url, title: w.url }), status, test, del);
+        })));
+      }
+      if (isAdmin) {
+        var url = h("input", { class: "input mono", type: "url", placeholder: "https://hooks.example.com/rootsystems", maxlength: "2000", "aria-label": "Alert address (HTTPS)" });
+        var add = h("button", { class: "btn" }, icon("plus"), "Add alert");
+        var full = hooks.length >= MAX_ALERTS;
+        if (full) { url.disabled = true; add.disabled = true; }
+        add.addEventListener("click", function () {
+          var value = url.value.trim();
+          if (value.indexOf("https://") !== 0) return toast("The address must start with https://", true);
+          add.disabled = true;
+          api("/console/alerts", { method: "POST", body: { url: value } }).then(function (r) {
+            url.value = "";
+            showWebhookSecret(r.webhook.url, r.secret);
+            loadAlerts(host, isAdmin, canTest);
+          }).catch(function (err) { add.disabled = false; toast(err.message, true); });
+        });
+        host.appendChild(h("div", { class: "secret", style: "margin-top:16px" }, url, add));
+        if (full) host.appendChild(h("small", { class: "faint", text: "Workspaces can have up to " + MAX_ALERTS + " alerts. Delete one to add another." }));
+      }
+      host.appendChild(h("p", { class: "faint", style: "margin:14px 0 0;font-size:12.5px", text: "Alerts are best-effort: a failed delivery is retried briefly, and retries still waiting when the server restarts are dropped. The ledger always has the full record." }));
+    }).catch(function (err) {
+      clear(host);
+      host.appendChild(h("p", { class: "muted", style: "margin:0", text: err.message }));
+    });
+  }
+  function showWebhookSecret(url, secret) {
+    var scrim = h("div", { class: "scrim" });
+    var modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "whs-t" });
+    function close() { scrim.remove(); modal.remove(); }
+    append(modal, [h("h3", { id: "whs-t", text: "Alert added" }),
+      h("p", { text: "Store this signing secret now. You will not see it again. Use it to check the X-RootSystems-Signature header on each call to " + url + "." }),
+      h("div", { class: "secret", style: "margin-bottom:18px" }, h("input", { class: "input mono", readonly: true, value: secret, "aria-label": "Signing secret" }), h("button", { class: "btn", onclick: function () { copy(secret, "Secret"); } }, icon("copy"), "Copy")),
+      h("div", { class: "modal__actions" }, h("button", { class: "btn btn--primary", onclick: close, text: "I have stored it" }))]);
     document.body.appendChild(scrim); document.body.appendChild(modal);
   }
 
