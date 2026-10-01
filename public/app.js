@@ -61,6 +61,7 @@ const formDataObject = (form) => Object.fromEntries(new FormData(form).entries()
 const HANDOFF_KEY = "floor3Handoff";
 const HANDOFF_BANDS = ["NOT_READY", "DEVELOPING", "SUBSTANTIALLY_READY"];
 const cleanText = (value, max) =>
+  // eslint-disable-next-line no-control-regex
   String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 const cleanInt = (value, max) => {
   const number = Number.parseInt(value, 10);
@@ -121,7 +122,7 @@ function handoffPrefill(handoff) {
 }
 
 // ---- Floor 3 journey indicator (Readiness -> Contract Gap -> Trust Proof) ----
-function flowStrip(current, { reportReady = false } = {}) {
+function flowStrip(current) {
   const steps = [
     ["AI Compliance Readiness", "Flag readiness gaps", "1"],
     ["Agent Contract Gap", "Check contracts and insurance", "2"],
@@ -595,9 +596,10 @@ function renderAgent() {
         </div>
       </section>
       <p id="agent-message" class="form-message"></p><div class="form-actions"><button type="submit" class="button button-primary">${agent.id ? "Update profile" : "Save and add evidence"} →</button></div>
-    </form>`);
+    </form>${agent.id ? '<section id="authority-certificate" class="card authority-card" aria-label="Authority certificate"></section>' : ""}`);
   document.querySelector("#agent-form").addEventListener("submit", submitAgent);
   document.querySelector("[data-fill-example]")?.addEventListener("click", fillExampleAgent);
+  if (agent.id) window.mountCertificatePanel?.(agent);
 }
 
 function fillExampleAgent() {
@@ -848,6 +850,7 @@ function renderAnalysis() {
         : `<div class="card analysis-hero"><span class="eyebrow">Ready to compare</span><h2>${escapeHtml(agent.name)} across ${state.documents.length} source${state.documents.length === 1 ? "" : "s"}</h2><p>The engine will assess authority, autonomy, approvals, transactions, data access, contractual language, insurance definitions, and jurisdiction support. Missing evidence will be reported explicitly.</p><button class="button button-primary" data-run-analysis>${latest ? "Run analysis" : "Create and run analysis"} →</button></div>
       <div class="grid grid-3" style="margin-top:18px"><div class="card card-pad"><div class="metric-label">Agent</div><strong style="display:block;margin-top:8px">${escapeHtml(agent.name)}</strong><span class="small muted">Autonomy ${agent.autonomyLevel}/5 · ${pretty(agent.humanOversightLevel)}</span></div><div class="card card-pad"><div class="metric-label">Evidence</div><strong style="display:block;margin-top:8px">${state.documents.length} document${state.documents.length === 1 ? "" : "s"}</strong><span class="small muted">${state.documents.length ? "Ready for structural review" : "Missing-evidence rules will apply"}</span></div><div class="card card-pad"><div class="metric-label">Jurisdiction</div><strong style="display:block;margin-top:8px">${escapeHtml(state.project.primaryCountryCode)}</strong><span class="small muted">Universal structural rules with support limitations</span></div></div>`
     }`);
+  if (report) window.mountAssurancePanel?.(latest);
   document.querySelector("[data-run-analysis]")?.addEventListener("click", runAnalysis);
   document.querySelector("[data-rerun]")?.addEventListener("click", runAnalysis);
   document.querySelector("[data-print-report]")?.addEventListener("click", () => window.print());
@@ -921,6 +924,7 @@ function reportView(report) {
               .join("")}</ul>`
           : "<p>No insurance-specific questions generated.</p>"
       }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div>${signoffCard(report)}</aside></div>
+    <section id="assurance-pack" class="card authority-card" aria-label="Agent Assurance Pack"></section>
     <div class="disclaimer">${escapeHtml(report.disclaimer)}</div>`;
 }
 

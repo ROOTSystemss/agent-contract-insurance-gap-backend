@@ -110,7 +110,7 @@
       .then(function (res) {
         return res.text().then(function (text) {
           var body = null;
-          try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+          try { body = text ? JSON.parse(text) : null; } catch { body = null; }
           if (res.status === 401 && state.token && path.indexOf("/auth/") !== 0) { signOut(true); }
           if (!res.ok) {
             var err = body && body.error;
