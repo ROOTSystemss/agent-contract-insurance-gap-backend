@@ -18,8 +18,8 @@ export interface Plan {
 
 export const PLANS: Record<PlanId, Plan> = {
   free: { id: "free", name: "Trial", priceUsdMonthly: 0, activeCertificates: 2, summary: "Explore the console with up to 2 active agent certificates." },
-  team: { id: "team", name: "Team", priceUsdMonthly: 299, activeCertificates: 10, summary: "Up to 10 active agents, live ledger, signed checkpoints, coverage analyses." },
-  business: { id: "business", name: "Business", priceUsdMonthly: 999, activeCertificates: 100, summary: "Up to 100 active agents, everything in Team, priority support." },
+  team: { id: "team", name: "Team", priceUsdMonthly: 399, activeCertificates: 10, summary: "Up to 10 active agents, live ledger, signed checkpoints, coverage analyses." },
+  business: { id: "business", name: "Business", priceUsdMonthly: 1199, activeCertificates: 100, summary: "Up to 100 active agents, everything in Team, priority support." },
 };
 
 // Dodo statuses that keep the paid plan's limits. on_hold is a failed renewal Dodo is still retrying:
