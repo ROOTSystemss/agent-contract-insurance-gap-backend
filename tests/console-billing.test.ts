@@ -91,7 +91,7 @@ describe("console billing", () => {
     expect(response.statusCode).toBe(200);
     const current = await plan();
     expect(current.plan.id).toBe("team");
-    expect(current.plan.activeCertificates).toBe(10);
+    expect(current.plan.activeCertificates).toBe(25);
   });
 
   it("ignores a redelivered event", async () => {
