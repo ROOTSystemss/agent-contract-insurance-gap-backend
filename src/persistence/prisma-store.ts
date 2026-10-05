@@ -21,6 +21,7 @@ import type {
   Role,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
+import { EmailVault, normalizeEmail } from "./email-vault.js";
 
 const iso = (date: Date): string => date.toISOString();
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
@@ -33,11 +34,59 @@ function subscriptionRow(row: {
 }
 
 export class PrismaStore implements Store {
-  constructor(readonly client = new PrismaClient()) {}
+  constructor(
+    readonly client = new PrismaClient(),
+    private readonly emails = new EmailVault(null),
+  ) {}
 
   async ready(): Promise<boolean> {
     await this.client.$queryRaw`SELECT 1`;
     return true;
+  }
+
+  private user(row: { id: string; email: string; name: string; passwordHash: string; createdAt: Date; updatedAt: Date }): User {
+    return {
+      id: row.id,
+      email: this.emails.open(row.email),
+      name: row.name,
+      passwordHash: row.passwordHash,
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt),
+    };
+  }
+
+  private userEmailData(email: string): { email: string; emailHash: string | null } {
+    const normalized = normalizeEmail(email);
+    return { email: this.emails.seal(normalized), emailHash: this.emails.index(normalized) };
+  }
+
+  // Encrypts emails stored before email encryption existed (accounts and console signers).
+  // Runs at startup; only touches rows not yet upgraded, so it is a no-op once done.
+  async encryptStoredEmails(): Promise<number> {
+    if (!this.emails.index("probe@example.com")) return 0;
+    let upgraded = 0;
+    const users = await this.client.user.findMany({ where: { emailHash: null }, select: { id: true, email: true } });
+    for (const row of users) {
+      try {
+        const result = await this.client.user.updateMany({
+          where: { id: row.id, emailHash: null },
+          data: this.userEmailData(this.emails.open(row.email)),
+        });
+        upgraded += result.count;
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")) throw error;
+        process.emitWarning(`User ${row.id} shares an email with another account; left unencrypted for manual review.`);
+      }
+    }
+    const signers = await this.client.consoleSigner.findMany({ where: { NOT: { trustProofEmail: { startsWith: "enc:v1:" } } } });
+    for (const row of signers) {
+      await this.client.consoleSigner.update({
+        where: { organizationId_userId: { organizationId: row.organizationId, userId: row.userId } },
+        data: { trustProofEmail: this.emails.seal(row.trustProofEmail) },
+      });
+      upgraded += 1;
+    }
+    return upgraded;
   }
 
   async createRegistration(input: {
@@ -50,7 +99,7 @@ export class PrismaStore implements Store {
       const result = await this.client.$transaction(async (database) => {
         const user = await database.user.create({
           data: {
-            email: input.email.toLowerCase(),
+            ...this.userEmailData(input.email),
             name: input.name,
             passwordHash: input.passwordHash,
           },
@@ -64,11 +113,7 @@ export class PrismaStore implements Store {
         return { user, organization, membership };
       });
       return {
-        user: {
-          ...result.user,
-          createdAt: iso(result.user.createdAt),
-          updatedAt: iso(result.user.updatedAt),
-        },
+        user: this.user(result.user),
         organization: {
           ...result.organization,
           createdAt: iso(result.organization.createdAt),
@@ -83,14 +128,21 @@ export class PrismaStore implements Store {
     }
   }
 
+  // Matches on the email fingerprint; the plain-column fallback covers rows not yet upgraded by
+  // encryptStoredEmails and development without a key.
   async findUserByEmail(email: string): Promise<User | null> {
-    const row = await this.client.user.findUnique({ where: { email: email.toLowerCase() } });
-    return row ? { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) } : null;
+    const normalized = normalizeEmail(email);
+    if (!normalized) return null;
+    const hash = this.emails.index(normalized);
+    const row = hash
+      ? await this.client.user.findFirst({ where: { OR: [{ emailHash: hash }, { emailHash: null, email: normalized }] } })
+      : await this.client.user.findUnique({ where: { email: normalized } });
+    return row ? this.user(row) : null;
   }
 
   async getUser(id: string): Promise<User | null> {
     const row = await this.client.user.findUnique({ where: { id } });
-    return row ? { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) } : null;
+    return row ? this.user(row) : null;
   }
 
   async getMembership(userId: string, organizationId?: string): Promise<OrganizationMember | null> {
@@ -123,7 +175,7 @@ export class PrismaStore implements Store {
       createdAt: iso(membership.createdAt),
       user: {
         id: user.id,
-        email: user.email,
+        email: this.emails.open(user.email),
         name: user.name,
         createdAt: iso(user.createdAt),
         updatedAt: iso(user.updatedAt),
@@ -608,7 +660,7 @@ export class PrismaStore implements Store {
   async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
     try {
       const membership = await this.client.$transaction(async (database) => {
-        const user = await database.user.create({ data: { email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash } });
+        const user = await database.user.create({ data: { ...this.userEmailData(input.email), name: input.name, passwordHash: input.passwordHash } });
         return database.organizationMember.create({ data: { organizationId, userId: user.id, role: input.role } });
       });
       return { ...membership, createdAt: iso(membership.createdAt) };
@@ -620,16 +672,17 @@ export class PrismaStore implements Store {
 
   async listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]> {
     const rows = await this.client.consoleSigner.findMany({ where: { organizationId } });
-    return rows.map((row) => ({ ...row, createdAt: iso(row.createdAt) }));
+    return rows.map((row) => ({ ...row, trustProofEmail: this.emails.open(row.trustProofEmail), createdAt: iso(row.createdAt) }));
   }
 
   async addConsoleSigner(record: Omit<ConsoleSigner, "createdAt">): Promise<ConsoleSigner> {
+    const trustProofEmail = this.emails.seal(record.trustProofEmail);
     const row = await this.client.consoleSigner.upsert({
       where: { organizationId_userId: { organizationId: record.organizationId, userId: record.userId } },
-      create: record,
-      update: { trustProofEmail: record.trustProofEmail },
+      create: { ...record, trustProofEmail },
+      update: { trustProofEmail },
     });
-    return { ...row, createdAt: iso(row.createdAt) };
+    return { ...row, trustProofEmail: record.trustProofEmail, createdAt: iso(row.createdAt) };
   }
 
   async reset(): Promise<void> {

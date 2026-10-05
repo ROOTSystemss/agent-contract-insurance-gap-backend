@@ -7,6 +7,12 @@ async function main(): Promise<void> {
   if (existsSync(".env")) loadEnvFile(".env");
   const config = loadConfig();
   const app = await buildApp({ config });
+  try {
+    const upgraded = await app.store.encryptStoredEmails();
+    if (upgraded > 0) app.log.info({ upgraded }, "encrypted stored account emails");
+  } catch (error) {
+    app.log.error({ err: error }, "account email encryption failed");
+  }
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "shutting down");
     await app.close();

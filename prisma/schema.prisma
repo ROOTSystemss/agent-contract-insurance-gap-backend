@@ -51,6 +51,8 @@ enum RetentionStatus {
 model User {
   id           String               @id @default(uuid()) @db.Uuid
   email        String               @unique
+  // Keyed fingerprint of the email (src/persistence/email-vault.ts); email itself is stored encrypted.
+  emailHash    String?              @unique
   name         String
   passwordHash String
   memberships  OrganizationMember[]

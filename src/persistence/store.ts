@@ -28,6 +28,8 @@ export interface RegistrationRecord {
 
 export interface Store {
   ready(): Promise<boolean>;
+  // Encrypts account emails stored before email encryption; returns how many rows changed.
+  encryptStoredEmails(): Promise<number>;
   createRegistration(input: {
     email: string;
     name: string;

@@ -39,6 +39,7 @@ import {
 import { JURISDICTION_PACKS } from "./jurisdictions/packs.js";
 import { MemoryStore } from "./persistence/memory-store.js";
 import { PrismaStore } from "./persistence/prisma-store.js";
+import { EmailVault } from "./persistence/email-vault.js";
 import type { Store } from "./persistence/store.js";
 import type { Role } from "./domain/types.js";
 import { CANONICAL_DISCLAIMER } from "./shared/disclaimer.js";
@@ -68,7 +69,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const config = options.config ?? loadConfig();
   const store =
     options.store ??
-    (config.PERSISTENCE_DRIVER === "postgres" ? new PrismaStore() : new MemoryStore());
+    (config.PERSISTENCE_DRIVER === "postgres"
+      ? new PrismaStore(
+          undefined,
+          new EmailVault(config.DOCUMENT_ENCRYPTION_KEY ? Buffer.from(config.DOCUMENT_ENCRYPTION_KEY, "base64") : null),
+        )
+      : new MemoryStore());
   const localStorage = new LocalDocumentStorage(path.resolve(config.UPLOAD_DIRECTORY));
   const storage =
     options.storage ??
