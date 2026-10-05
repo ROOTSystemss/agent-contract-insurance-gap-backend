@@ -18,3 +18,11 @@ export const forbidden = (): AppError =>
 
 export const unauthorized = (): AppError =>
   new AppError(401, "UNAUTHORIZED", "Authentication is required.");
+
+// Prisma error messages can quote the query arguments, which hold customer data, so only their
+// type and code reach the logs.
+export function loggableError(error: unknown): unknown {
+  if (!(error instanceof Error) || !error.name.startsWith("PrismaClient")) return error;
+  const code = (error as { code?: unknown }).code;
+  return { type: error.name, ...(typeof code === "string" ? { code } : {}) };
+}

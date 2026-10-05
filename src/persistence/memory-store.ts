@@ -63,6 +63,10 @@ export class MemoryStore implements Store {
     return 0;
   }
 
+  async encryptStoredData(): Promise<number> {
+    return 0;
+  }
+
   async createRegistration(input: {
     email: string;
     name: string;

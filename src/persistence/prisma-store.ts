@@ -19,12 +19,30 @@ import type {
   ConsoleSubscription,
   ConsoleSigner,
   Role,
+  TextSegment,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 import { EmailVault, normalizeEmail } from "./email-vault.js";
+import { SEALED_PREFIX } from "./field-vault.js";
 
 const iso = (date: Date): string => date.toISOString();
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
+
+type FieldKind = "text" | "list" | "json";
+type FieldData = Record<string, unknown>;
+const UPGRADE_BATCH = 200;
+
+// SQL conditions matching rows that still hold plaintext in a sealed column. Column and table
+// names passed to these come only from the constants in encryptStoredData.
+const pendingCondition: Record<FieldKind, (column: string) => string> = {
+  text: (column) => `"${column}" NOT LIKE '${SEALED_PREFIX}%'`,
+  list: (column) => `EXISTS (SELECT 1 FROM unnest("${column}") AS item WHERE item NOT LIKE '${SEALED_PREFIX}%')`,
+  json: (column) => `jsonb_typeof("${column}") NOT IN ('string', 'null')`,
+};
+
+function auditProjectId(metadata: AuditEvent["metadata"]): string | null {
+  return typeof metadata.projectId === "string" ? metadata.projectId : null;
+}
 
 function subscriptionRow(row: {
   organizationId: string; plan: string; status: string; dodoCustomerId: string | null; dodoSubscriptionId: string | null;
@@ -36,7 +54,7 @@ function subscriptionRow(row: {
 export class PrismaStore implements Store {
   constructor(
     readonly client = new PrismaClient(),
-    private readonly emails = new EmailVault(null),
+    private readonly vault = new EmailVault(null),
   ) {}
 
   async ready(): Promise<boolean> {
@@ -44,11 +62,15 @@ export class PrismaStore implements Store {
     return true;
   }
 
+  private sealJson(value: unknown): Prisma.InputJsonValue {
+    return json(this.vault.sealJson(value));
+  }
+
   private user(row: { id: string; email: string; name: string; passwordHash: string; createdAt: Date; updatedAt: Date }): User {
     return {
       id: row.id,
-      email: this.emails.open(row.email),
-      name: row.name,
+      email: this.vault.open(row.email),
+      name: this.vault.open(row.name),
       passwordHash: row.passwordHash,
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),
@@ -57,20 +79,20 @@ export class PrismaStore implements Store {
 
   private userEmailData(email: string): { email: string; emailHash: string | null } {
     const normalized = normalizeEmail(email);
-    return { email: this.emails.seal(normalized), emailHash: this.emails.index(normalized) };
+    return { email: this.vault.seal(normalized), emailHash: this.vault.index(normalized) };
   }
 
   // Encrypts emails stored before email encryption existed (accounts and console signers).
   // Runs at startup; only touches rows not yet upgraded, so it is a no-op once done.
   async encryptStoredEmails(): Promise<number> {
-    if (!this.emails.index("probe@example.com")) return 0;
+    if (!this.vault.index("probe@example.com")) return 0;
     let upgraded = 0;
     const users = await this.client.user.findMany({ where: { emailHash: null }, select: { id: true, email: true } });
     for (const row of users) {
       try {
         const result = await this.client.user.updateMany({
           where: { id: row.id, emailHash: null },
-          data: this.userEmailData(this.emails.open(row.email)),
+          data: this.userEmailData(this.vault.open(row.email)),
         });
         upgraded += result.count;
       } catch (error) {
@@ -82,11 +104,100 @@ export class PrismaStore implements Store {
     for (const row of signers) {
       await this.client.consoleSigner.update({
         where: { organizationId_userId: { organizationId: row.organizationId, userId: row.userId } },
-        data: { trustProofEmail: this.emails.seal(row.trustProofEmail) },
+        data: { trustProofEmail: this.vault.seal(row.trustProofEmail) },
       });
       upgraded += 1;
     }
     return upgraded;
+  }
+
+  // Seals every customer field written before field encryption existed (and the account emails
+  // above). Runs at startup and only touches rows that still hold plaintext, so it is a no-op once
+  // done. Rows that change concurrently are left for the next run rather than overwritten.
+  async encryptStoredData(): Promise<number> {
+    if (!this.vault.enabled) return 0;
+    const db = this.client;
+    let upgraded = await this.encryptStoredEmails();
+    upgraded += await this.upgradeTable("User", "id", { name: "text" },
+      (id) => db.user.findUnique({ where: { id } }),
+      (row, data) => db.user.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable("Organization", "id", { name: "text" },
+      (id) => db.organization.findUnique({ where: { id } }),
+      (row, data) => db.organization.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable("Project", "id", { name: "text", description: "text" },
+      (id) => db.project.findUnique({ where: { id } }),
+      (row, data) => db.project.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable("AgentProfile", "id", { profile: "json" },
+      (id) => db.agentProfile.findUnique({ where: { id } }),
+      (row, data) => db.agentProfile.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable(
+      "Document", "id",
+      { originalFilename: "text", safeFilename: "text", extractedText: "text", extractionError: "text", extractionWarnings: "list" },
+      (id) => db.document.findUnique({ where: { id } }),
+      (row, data) => db.document.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable("DocumentSegment", "id", { sectionHeading: "text", normalizedText: "text", originalText: "text" },
+      (id) => db.documentSegment.findUnique({ where: { id } }),
+      (row, data) => db.documentSegment.updateMany({ where: { id: row.id }, data }));
+    upgraded += await this.upgradeTable("Analysis", "id", { attentionScore: "json", warnings: "list", failureReason: "text" },
+      (id) => db.analysis.findUnique({ where: { id } }),
+      (row, data) => db.analysis.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable("Finding", "id", { payload: "json" },
+      (id) => db.finding.findUnique({ where: { id } }),
+      (row, data) => db.finding.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
+    upgraded += await this.upgradeTable("AuditEvent", "id", { metadata: "json" },
+      (id) => db.auditEvent.findUnique({ where: { id } }),
+      (row, data) => db.auditEvent.updateMany({
+        where: { id: row.id },
+        data: { ...data, projectId: row.projectId ?? auditProjectId(row.metadata as AuditEvent["metadata"]) },
+      }));
+    upgraded += await this.upgradeTable("ServiceLink", "organizationId", { atlasEmail: "text", trustProofEmail: "text" },
+      (organizationId) => db.serviceLink.findUnique({ where: { organizationId } }),
+      (row, data) => db.serviceLink.updateMany({
+        where: { organizationId: row.organizationId, updatedAt: row.updatedAt },
+        data: { ...data, updatedAt: row.updatedAt },
+      }));
+    upgraded += await this.upgradeTable("ConsoleCertificate", "jti", { certificate: "text", pqSignature: "json" },
+      (jti) => db.consoleCertificate.findUnique({ where: { jti } }),
+      (row, data) => db.consoleCertificate.updateMany({ where: { jti: row.jti }, data }));
+    return upgraded;
+  }
+
+  private async upgradeTable<Row extends FieldData>(
+    table: string,
+    key: string,
+    fields: Record<string, FieldKind>,
+    find: (key: string) => Promise<Row | null>,
+    save: (row: Row, data: FieldData) => Promise<{ count: number }>,
+  ): Promise<number> {
+    const conditions = Object.entries(fields).map(([column, kind]) => pendingCondition[kind](column)).join(" OR ");
+    let upgraded = 0;
+    let after: string | null = null;
+    for (;;) {
+      const keys: Array<{ key: string }> = await this.client.$queryRawUnsafe(
+        `SELECT "${key}"::text AS key FROM "${table}" WHERE (${conditions})${after === null ? "" : ` AND "${key}"::text > $1`} ORDER BY 1 LIMIT ${UPGRADE_BATCH}`,
+        ...(after === null ? [] : [after]),
+      );
+      for (const { key: id } of keys) {
+        const row = await find(id);
+        const data = row ? this.pendingFieldData(row, fields) : null;
+        if (row && data) upgraded += (await save(row, data)).count;
+      }
+      if (keys.length < UPGRADE_BATCH) return upgraded;
+      after = keys[keys.length - 1]!.key;
+    }
+  }
+
+  private pendingFieldData(row: FieldData, fields: Record<string, FieldKind>): FieldData | null {
+    const data: FieldData = {};
+    for (const [field, kind] of Object.entries(fields)) {
+      const value = row[field];
+      if (value === null || value === undefined) continue;
+      if (kind === "text" && !this.vault.isSealed(value)) data[field] = this.vault.seal(value as string);
+      if (kind === "list" && (value as string[]).some((item) => !this.vault.isSealed(item)))
+        data[field] = (value as string[]).map((item) => (this.vault.isSealed(item) ? item : this.vault.seal(item)));
+      if (kind === "json" && !this.vault.isSealed(value)) data[field] = this.sealJson(value);
+    }
+    return Object.keys(data).length ? data : null;
   }
 
   async createRegistration(input: {
@@ -100,12 +211,12 @@ export class PrismaStore implements Store {
         const user = await database.user.create({
           data: {
             ...this.userEmailData(input.email),
-            name: input.name,
+            name: this.vault.seal(input.name),
             passwordHash: input.passwordHash,
           },
         });
         const organization = await database.organization.create({
-          data: { name: input.organizationName },
+          data: { name: this.vault.seal(input.organizationName) },
         });
         const membership = await database.organizationMember.create({
           data: { userId: user.id, organizationId: organization.id, role: "owner" },
@@ -114,11 +225,7 @@ export class PrismaStore implements Store {
       });
       return {
         user: this.user(result.user),
-        organization: {
-          ...result.organization,
-          createdAt: iso(result.organization.createdAt),
-          updatedAt: iso(result.organization.updatedAt),
-        },
+        organization: this.organization(result.organization),
         membership: { ...result.membership, createdAt: iso(result.membership.createdAt) },
       };
     } catch (error) {
@@ -133,7 +240,7 @@ export class PrismaStore implements Store {
   async findUserByEmail(email: string): Promise<User | null> {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
-    const hash = this.emails.index(normalized);
+    const hash = this.vault.index(normalized);
     const row = hash
       ? await this.client.user.findFirst({ where: { OR: [{ emailHash: hash }, { emailHash: null, email: normalized }] } })
       : await this.client.user.findUnique({ where: { email: normalized } });
@@ -154,11 +261,11 @@ export class PrismaStore implements Store {
 
   async getOrganization(id: string): Promise<Organization | null> {
     const row = await this.client.organization.findUnique({ where: { id } });
-    return row ? { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) } : null;
+    return row ? this.organization(row) : null;
   }
 
   async updateOrganization(id: string, name: string): Promise<Organization | null> {
-    const result = await this.client.organization.updateMany({ where: { id }, data: { name } });
+    const result = await this.client.organization.updateMany({ where: { id }, data: { name: this.vault.seal(name) } });
     return result.count ? this.getOrganization(id) : null;
   }
 
@@ -175,8 +282,8 @@ export class PrismaStore implements Store {
       createdAt: iso(membership.createdAt),
       user: {
         id: user.id,
-        email: this.emails.open(user.email),
-        name: user.name,
+        email: this.vault.open(user.email),
+        name: this.vault.open(user.name),
         createdAt: iso(user.createdAt),
         updatedAt: iso(user.updatedAt),
       },
@@ -187,7 +294,9 @@ export class PrismaStore implements Store {
     organizationId: string,
     input: Omit<Project, "id" | "organizationId" | "createdAt" | "updatedAt" | "deletedAt">,
   ): Promise<Project> {
-    const row = await this.client.project.create({ data: { organizationId, ...input } });
+    const row = await this.client.project.create({
+      data: { organizationId, ...input, name: this.vault.seal(input.name), description: this.vault.sealOptional(input.description) },
+    });
     return this.mapProject(row);
   }
 
@@ -231,7 +340,11 @@ export class PrismaStore implements Store {
   ): Promise<Project | null> {
     const result = await this.client.project.updateMany({
       where: { id, organizationId, deletedAt: null },
-      data: input,
+      data: {
+        ...input,
+        ...(input.name !== undefined ? { name: this.vault.seal(input.name) } : {}),
+        ...(input.description !== undefined ? { description: this.vault.sealOptional(input.description) } : {}),
+      },
     });
     return result.count ? this.getProject(organizationId, id) : null;
   }
@@ -250,7 +363,7 @@ export class PrismaStore implements Store {
     input: AgentProfileInput,
   ): Promise<AgentProfile> {
     const row = await this.client.agentProfile.create({
-      data: { organizationId, projectId, profile: json(input) },
+      data: { organizationId, projectId, profile: this.sealJson(input) },
     });
     return this.mapAgent(row);
   }
@@ -285,7 +398,7 @@ export class PrismaStore implements Store {
     } = existing;
     await this.client.agentProfile.update({
       where: { id },
-      data: { profile: json({ ...profile, ...input }) },
+      data: { profile: this.sealJson({ ...profile, ...input }) },
     });
     return this.getAgent(organizationId, id);
   }
@@ -302,8 +415,8 @@ export class PrismaStore implements Store {
         organizationId: document.organizationId,
         projectId: document.projectId,
         uploaderId: document.uploaderId,
-        originalFilename: document.originalFilename,
-        safeFilename: document.safeFilename,
+        originalFilename: this.vault.seal(document.originalFilename),
+        safeFilename: this.vault.seal(document.safeFilename),
         mimeType: document.mimeType,
         size: document.size,
         checksum: document.checksum,
@@ -312,21 +425,13 @@ export class PrismaStore implements Store {
         subdivisionCode: document.subdivisionCode,
         storageKey: document.storageKey,
         extractionStatus: document.extractionStatus,
-        extractionError: document.extractionError,
-        extractionWarnings: document.extractionWarnings,
+        extractionError: this.vault.sealOptional(document.extractionError),
+        extractionWarnings: this.vault.sealList(document.extractionWarnings),
         pageCount: document.pageCount,
-        extractedText: document.extractedText,
+        extractedText: this.vault.seal(document.extractedText),
         retentionStatus: document.retentionStatus,
         deleteAfter: document.deleteAfter ? new Date(document.deleteAfter) : null,
-        segments: {
-          create: document.segments.map(
-            ({ id, organizationId, documentId: _documentId, ...segment }) => ({
-              ...segment,
-              id,
-              organizationId,
-            }),
-          ),
-        },
+        segments: { create: document.segments.map((segment) => this.segmentData(segment)) },
       },
       include: { segments: { orderBy: { paragraphNumber: "asc" } } },
     });
@@ -370,19 +475,11 @@ export class PrismaStore implements Store {
         where: { id: document.id },
         data: {
           extractionStatus: document.extractionStatus,
-          extractionError: document.extractionError,
-          extractionWarnings: document.extractionWarnings,
+          extractionError: this.vault.sealOptional(document.extractionError),
+          extractionWarnings: this.vault.sealList(document.extractionWarnings),
           pageCount: document.pageCount,
-          extractedText: document.extractedText,
-          segments: {
-            create: document.segments.map(
-              ({ id, organizationId, documentId: _documentId, ...segment }) => ({
-                ...segment,
-                id,
-                organizationId,
-              }),
-            ),
-          },
+          extractedText: this.vault.seal(document.extractedText),
+          segments: { create: document.segments.map((segment) => this.segmentData(segment)) },
         },
       }),
     ]);
@@ -397,7 +494,7 @@ export class PrismaStore implements Store {
       data: {
         retentionStatus: "deleted",
         deletedAt: new Date(),
-        extractedText: "",
+        extractedText: this.vault.seal(""),
         segments: { deleteMany: {} },
       },
     });
@@ -436,9 +533,9 @@ export class PrismaStore implements Store {
         engineVersion: analysis.engineVersion,
         rulesetVersions: analysis.rulesetVersions,
         jurisdictionPackIds: analysis.jurisdictionPackIds,
-        attentionScore: analysis.attentionScore ? json(analysis.attentionScore) : Prisma.JsonNull,
-        warnings: analysis.warnings,
-        failureReason: analysis.failureReason,
+        attentionScore: analysis.attentionScore ? this.sealJson(analysis.attentionScore) : Prisma.JsonNull,
+        warnings: this.vault.sealList(analysis.warnings),
+        failureReason: this.vault.sealOptional(analysis.failureReason),
         completedAt: analysis.completedAt ? new Date(analysis.completedAt) : null,
         documents: { create: analysis.documentIds.map((documentId) => ({ documentId })) },
       },
@@ -482,9 +579,9 @@ export class PrismaStore implements Store {
         engineVersion: analysis.engineVersion,
         rulesetVersions: analysis.rulesetVersions,
         jurisdictionPackIds: analysis.jurisdictionPackIds,
-        attentionScore: analysis.attentionScore ? json(analysis.attentionScore) : Prisma.JsonNull,
-        warnings: analysis.warnings,
-        failureReason: analysis.failureReason,
+        attentionScore: analysis.attentionScore ? this.sealJson(analysis.attentionScore) : Prisma.JsonNull,
+        warnings: this.vault.sealList(analysis.warnings),
+        failureReason: this.vault.sealOptional(analysis.failureReason),
         completedAt: analysis.completedAt ? new Date(analysis.completedAt) : null,
       },
     });
@@ -511,7 +608,7 @@ export class PrismaStore implements Store {
             confidence: finding.confidence,
             status: finding.status,
             stableKey: finding.id,
-            payload: json(finding),
+            payload: this.sealJson(finding),
           },
         });
       }
@@ -533,12 +630,12 @@ export class PrismaStore implements Store {
       }),
       this.client.finding.count({ where }),
     ]);
-    return { items: rows.map((row) => row.payload as unknown as Finding), total, ...pagination };
+    return { items: rows.map((row) => this.vault.openJson<Finding>(row.payload)), total, ...pagination };
   }
 
   async getFinding(organizationId: string, id: string): Promise<Finding | null> {
     const row = await this.client.finding.findFirst({ where: { id, organizationId } });
-    return row ? (row.payload as unknown as Finding) : null;
+    return row ? this.vault.openJson<Finding>(row.payload) : null;
   }
 
   async updateFindingStatus(
@@ -549,7 +646,7 @@ export class PrismaStore implements Store {
     const existing = await this.getFinding(organizationId, id);
     if (!existing) return null;
     const updated = { ...existing, status };
-    await this.client.finding.update({ where: { id }, data: { status, payload: json(updated) } });
+    await this.client.finding.update({ where: { id }, data: { status, payload: this.sealJson(updated) } });
     return updated;
   }
 
@@ -563,7 +660,8 @@ export class PrismaStore implements Store {
         resourceId: event.resourceId,
         action: event.action,
         requestId: event.requestId,
-        metadata: json(event.metadata),
+        projectId: auditProjectId(event.metadata),
+        metadata: this.sealJson(event.metadata),
         createdAt: new Date(event.createdAt),
       },
     });
@@ -576,21 +674,21 @@ export class PrismaStore implements Store {
   ): Promise<Paginated<AuditEvent>> {
     const where: Prisma.AuditEventWhereInput = {
       organizationId,
-      OR: [{ resourceId: projectId }, { metadata: { path: ["projectId"], equals: projectId } }],
+      OR: [{ resourceId: projectId }, { projectId }],
     };
     const [rows, total] = await this.client.$transaction([
       this.client.auditEvent.findMany({
         where,
         skip: (pagination.page - 1) * pagination.pageSize,
         take: pagination.pageSize,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       }),
       this.client.auditEvent.count({ where }),
     ]);
     return {
-      items: rows.map((row) => ({
+      items: rows.map(({ projectId: _projectId, ...row }) => ({
         ...row,
-        metadata: row.metadata as AuditEvent["metadata"],
+        metadata: this.vault.openJson<AuditEvent["metadata"]>(row.metadata),
         createdAt: iso(row.createdAt),
       })),
       total,
@@ -600,29 +698,34 @@ export class PrismaStore implements Store {
 
   async getServiceLink(organizationId: string): Promise<ServiceLink | null> {
     const row = await this.client.serviceLink.findUnique({ where: { organizationId } });
-    return row ? { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) } : null;
+    return row ? this.serviceLink(row) : null;
   }
 
   async saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink> {
     const { organizationId, ...fields } = link;
+    const sealed = { ...fields, atlasEmail: this.vault.seal(fields.atlasEmail), trustProofEmail: this.vault.seal(fields.trustProofEmail) };
     const row = await this.client.serviceLink.upsert({
       where: { organizationId },
-      create: link,
-      update: fields,
+      create: { organizationId, ...sealed },
+      update: sealed,
     });
-    return { ...row, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) };
+    return this.serviceLink(row);
   }
 
   async addConsoleCertificate(record: Omit<ConsoleCertificate, "createdAt">): Promise<ConsoleCertificate> {
     const row = await this.client.consoleCertificate.create({
-      data: { ...record, pqSignature: record.pqSignature === null ? Prisma.JsonNull : json(record.pqSignature) },
+      data: {
+        ...record,
+        certificate: this.vault.seal(record.certificate),
+        pqSignature: record.pqSignature === null ? Prisma.JsonNull : this.sealJson(record.pqSignature),
+      },
     });
-    return { ...row, pqSignature: row.pqSignature ?? null, createdAt: iso(row.createdAt) };
+    return this.consoleCertificate(row);
   }
 
   async getConsoleCertificate(organizationId: string, jti: string): Promise<ConsoleCertificate | null> {
     const row = await this.client.consoleCertificate.findFirst({ where: { jti, organizationId } });
-    return row ? { ...row, pqSignature: row.pqSignature ?? null, createdAt: iso(row.createdAt) } : null;
+    return row ? this.consoleCertificate(row) : null;
   }
 
   async getConsoleSubscription(organizationId: string): Promise<ConsoleSubscription | null> {
@@ -660,7 +763,7 @@ export class PrismaStore implements Store {
   async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
     try {
       const membership = await this.client.$transaction(async (database) => {
-        const user = await database.user.create({ data: { ...this.userEmailData(input.email), name: input.name, passwordHash: input.passwordHash } });
+        const user = await database.user.create({ data: { ...this.userEmailData(input.email), name: this.vault.seal(input.name), passwordHash: input.passwordHash } });
         return database.organizationMember.create({ data: { organizationId, userId: user.id, role: input.role } });
       });
       return { ...membership, createdAt: iso(membership.createdAt) };
@@ -672,11 +775,11 @@ export class PrismaStore implements Store {
 
   async listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]> {
     const rows = await this.client.consoleSigner.findMany({ where: { organizationId } });
-    return rows.map((row) => ({ ...row, trustProofEmail: this.emails.open(row.trustProofEmail), createdAt: iso(row.createdAt) }));
+    return rows.map((row) => ({ ...row, trustProofEmail: this.vault.open(row.trustProofEmail), createdAt: iso(row.createdAt) }));
   }
 
   async addConsoleSigner(record: Omit<ConsoleSigner, "createdAt">): Promise<ConsoleSigner> {
-    const trustProofEmail = this.emails.seal(record.trustProofEmail);
+    const trustProofEmail = this.vault.seal(record.trustProofEmail);
     const row = await this.client.consoleSigner.upsert({
       where: { organizationId_userId: { organizationId: record.organizationId, userId: record.userId } },
       create: { ...record, trustProofEmail },
@@ -724,9 +827,43 @@ export class PrismaStore implements Store {
   }): Project {
     return {
       ...row,
+      name: this.vault.open(row.name),
+      description: this.vault.openOptional(row.description),
       deletedAt: row.deletedAt ? iso(row.deletedAt) : null,
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),
+    };
+  }
+
+  private organization(row: { id: string; name: string; createdAt: Date; updatedAt: Date }): Organization {
+    return { ...row, name: this.vault.open(row.name), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) };
+  }
+
+  private serviceLink(row: Omit<ServiceLink, "createdAt" | "updatedAt"> & { createdAt: Date; updatedAt: Date }): ServiceLink {
+    return {
+      ...row,
+      atlasEmail: this.vault.open(row.atlasEmail),
+      trustProofEmail: this.vault.open(row.trustProofEmail),
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt),
+    };
+  }
+
+  private consoleCertificate(row: Omit<ConsoleCertificate, "createdAt" | "pqSignature"> & { pqSignature: Prisma.JsonValue; createdAt: Date }): ConsoleCertificate {
+    return {
+      ...row,
+      certificate: this.vault.open(row.certificate),
+      pqSignature: row.pqSignature === null ? null : this.vault.openJson(row.pqSignature),
+      createdAt: iso(row.createdAt),
+    };
+  }
+
+  private segmentData({ documentId: _documentId, ...segment }: TextSegment) {
+    return {
+      ...segment,
+      sectionHeading: this.vault.sealOptional(segment.sectionHeading),
+      normalizedText: this.vault.seal(segment.normalizedText),
+      originalText: this.vault.seal(segment.originalText),
     };
   }
 
@@ -739,7 +876,7 @@ export class PrismaStore implements Store {
     updatedAt: Date;
   }): AgentProfile {
     return {
-      ...(row.profile as unknown as AgentProfileInput),
+      ...this.vault.openJson<AgentProfileInput>(row.profile),
       id: row.id,
       organizationId: row.organizationId,
       projectId: row.projectId,
@@ -756,8 +893,8 @@ export class PrismaStore implements Store {
       organizationId: row.organizationId,
       projectId: row.projectId,
       uploaderId: row.uploaderId,
-      originalFilename: row.originalFilename,
-      safeFilename: row.safeFilename,
+      originalFilename: this.vault.open(row.originalFilename),
+      safeFilename: this.vault.open(row.safeFilename),
       mimeType: row.mimeType,
       size: row.size,
       checksum: row.checksum,
@@ -766,10 +903,10 @@ export class PrismaStore implements Store {
       subdivisionCode: row.subdivisionCode,
       storageKey: row.storageKey,
       extractionStatus: row.extractionStatus,
-      extractionError: row.extractionError,
-      extractionWarnings: row.extractionWarnings,
+      extractionError: this.vault.openOptional(row.extractionError),
+      extractionWarnings: this.vault.openList(row.extractionWarnings),
       pageCount: row.pageCount,
-      extractedText: row.extractedText,
+      extractedText: this.vault.open(row.extractedText),
       retentionStatus: row.retentionStatus,
       deleteAfter: row.deleteAfter ? iso(row.deleteAfter) : null,
       deletedAt: row.deletedAt ? iso(row.deletedAt) : null,
@@ -777,8 +914,9 @@ export class PrismaStore implements Store {
       updatedAt: iso(row.updatedAt),
       segments: row.segments.map((segment) => ({
         ...segment,
-        pageNumber: segment.pageNumber,
-        sectionHeading: segment.sectionHeading,
+        sectionHeading: this.vault.openOptional(segment.sectionHeading),
+        normalizedText: this.vault.open(segment.normalizedText),
+        originalText: this.vault.open(segment.originalText),
       })),
     };
   }
@@ -794,9 +932,9 @@ export class PrismaStore implements Store {
       engineVersion: row.engineVersion,
       rulesetVersions: row.rulesetVersions,
       jurisdictionPackIds: row.jurisdictionPackIds,
-      attentionScore: row.attentionScore ? (row.attentionScore as unknown as AttentionScore) : null,
-      warnings: row.warnings,
-      failureReason: row.failureReason,
+      attentionScore: row.attentionScore ? this.vault.openJson<AttentionScore>(row.attentionScore) : null,
+      warnings: this.vault.openList(row.warnings),
+      failureReason: this.vault.openOptional(row.failureReason),
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),
       completedAt: row.completedAt ? iso(row.completedAt) : null,

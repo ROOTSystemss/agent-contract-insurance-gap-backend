@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EmailVault } from "../src/persistence/email-vault.js";
 import { PrismaStore } from "../src/persistence/prisma-store.js";
+import { openTestDatabase } from "./helpers.js";
 
 const key = randomBytes(32);
 
@@ -46,12 +47,10 @@ describe.skipIf(!databaseUrl)("PrismaStore account email encryption (Postgres)",
   let store: PrismaStore;
 
   beforeAll(async () => {
-    const host = new URL(databaseUrl!).hostname;
-    if (!["localhost", "127.0.0.1"].includes(host)) throw new Error("ACG_TEST_DATABASE_URL must point at a local database");
-    client = new PrismaClient({ datasources: { db: { url: databaseUrl! } } });
+    client = await openTestDatabase(databaseUrl!);
     store = new PrismaStore(client, new EmailVault(key));
     await store.reset();
-  });
+  }, 120_000);
 
   afterAll(async () => {
     await client?.$disconnect();

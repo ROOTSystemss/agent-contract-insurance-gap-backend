@@ -2,16 +2,17 @@ import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
+import { loggableError } from "./shared/errors.js";
 
 async function main(): Promise<void> {
   if (existsSync(".env")) loadEnvFile(".env");
   const config = loadConfig();
   const app = await buildApp({ config });
   try {
-    const upgraded = await app.store.encryptStoredEmails();
-    if (upgraded > 0) app.log.info({ upgraded }, "encrypted stored account emails");
+    const upgraded = await app.store.encryptStoredData();
+    if (upgraded > 0) app.log.info({ upgraded }, "encrypted stored customer data");
   } catch (error) {
-    app.log.error({ err: error }, "account email encryption failed");
+    app.log.error({ err: loggableError(error) }, "stored customer data encryption failed");
   }
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "shutting down");

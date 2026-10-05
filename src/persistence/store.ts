@@ -30,6 +30,8 @@ export interface Store {
   ready(): Promise<boolean>;
   // Encrypts account emails stored before email encryption; returns how many rows changed.
   encryptStoredEmails(): Promise<number>;
+  // Encrypts every customer field (emails included) stored before field encryption; returns how many rows changed.
+  encryptStoredData(): Promise<number>;
   createRegistration(input: {
     email: string;
     name: string;

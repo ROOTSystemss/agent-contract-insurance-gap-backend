@@ -95,7 +95,7 @@ const envSchema = z
         context.addIssue({
           code: "custom",
           path: ["DOCUMENT_ENCRYPTION_KEY"],
-          message: "Production requires encrypted document storage.",
+          message: "Production requires encrypted document storage and encrypted customer data in the database.",
         });
       }
       if (

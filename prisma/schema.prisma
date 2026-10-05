@@ -249,11 +249,14 @@ model AuditEvent {
   resourceId     String
   action         String
   requestId      String
+  // metadata is stored encrypted, so the project it refers to is kept beside it for filtering.
+  projectId      String?
   metadata       Json
   createdAt      DateTime     @default(now())
 
   @@index([organizationId, createdAt])
   @@index([organizationId, resourceType, resourceId])
+  @@index([organizationId, projectId])
 }
 
 model JurisdictionPackRecord {
@@ -273,7 +276,7 @@ model JurisdictionPackRecord {
 }
 
 // Agent Governance console: the Authority Atlas identity and Trust Proof organization that act for
-// this workspace. Secrets are stored only as AES-256-GCM ciphertext (DOCUMENT_ENCRYPTION_KEY).
+// this workspace. Emails and secrets are stored only as AES-256-GCM ciphertext (DOCUMENT_ENCRYPTION_KEY).
 model ServiceLink {
   organizationId      String       @id @db.Uuid
   atlasEmail          String
@@ -286,8 +289,8 @@ model ServiceLink {
   updatedAt           DateTime     @updatedAt
 }
 
-// Certificates issued from the console, kept so the workspace can copy them again later. A
-// certificate is a signed public statement, not a secret; revocation status lives in Atlas.
+// Certificates issued from the console, kept so the workspace can copy them again later. Stored
+// encrypted like other customer data; revocation status lives in Atlas.
 model ConsoleCertificate {
   jti            String       @id
   organizationId String       @db.Uuid

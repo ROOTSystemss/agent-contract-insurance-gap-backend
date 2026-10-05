@@ -43,7 +43,7 @@ import { EmailVault } from "./persistence/email-vault.js";
 import type { Store } from "./persistence/store.js";
 import type { Role } from "./domain/types.js";
 import { CANONICAL_DISCLAIMER } from "./shared/disclaimer.js";
-import { AppError, unauthorized } from "./shared/errors.js";
+import { AppError, loggableError, unauthorized } from "./shared/errors.js";
 
 export interface BuildAppOptions {
   config?: AppConfig;
@@ -230,7 +230,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
             app.log.info(sweep, "document retention sweep completed");
         })
         .catch((error: unknown) =>
-          app.log.error({ err: error }, "document retention sweep failed"),
+          app.log.error({ err: loggableError(error) }, "document retention sweep failed"),
         );
     }, config.RETENTION_SWEEP_INTERVAL_MS);
     retentionTimer.unref();
@@ -291,7 +291,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       typeof possibleStatus === "number" && possibleStatus >= 400 && possibleStatus < 500
         ? possibleStatus
         : 500;
-    if (statusCode >= 500) request.log.error({ err: error }, "request failed");
+    if (statusCode >= 500) request.log.error({ err: loggableError(error) }, "request failed");
     return reply.code(statusCode).send({
       error: {
         code: statusCode === 413 ? "PAYLOAD_TOO_LARGE" : "INTERNAL_ERROR",

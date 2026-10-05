@@ -5,11 +5,13 @@ import { loadConfig } from "../src/config/env.js";
 import { DEMO_EMAIL, DEMO_PASSWORD, procurementAgent } from "../src/demo/data.js";
 import { DocumentService } from "../src/documents/document-service.js";
 import { LocalDocumentStorage } from "../src/documents/storage.js";
+import { EmailVault } from "../src/persistence/email-vault.js";
 import { PrismaStore } from "../src/persistence/prisma-store.js";
 
 async function main(): Promise<void> {
   const config = loadConfig({ ...process.env, PERSISTENCE_DRIVER: "postgres" });
-  const store = new PrismaStore();
+  const key = config.DOCUMENT_ENCRYPTION_KEY ? Buffer.from(config.DOCUMENT_ENCRYPTION_KEY, "base64") : null;
+  const store = new PrismaStore(undefined, new EmailVault(key));
   try {
     let user = await store.findUserByEmail(DEMO_EMAIL);
     let membership = user ? await store.getMembership(user.id) : null;
@@ -23,13 +25,8 @@ async function main(): Promise<void> {
       user = registration.user;
       membership = registration.membership;
     }
-    const existing = await store.client.project.findFirst({
-      where: {
-        organizationId: membership.organizationId,
-        name: "Fictional Procurement Agent Review",
-        deletedAt: null,
-      },
-    });
+    const projects = await store.listProjects(membership.organizationId, { page: 1, pageSize: 1000 });
+    const existing = projects.items.find((project) => project.name === "Fictional Procurement Agent Review");
     if (existing) {
       process.stdout.write(`Demo project already exists: ${existing.id}\n`);
       return;
