@@ -130,7 +130,7 @@ function flowStrip(current) {
   ];
   const stateFor = (index) =>
     index + 1 < current ? "done" : index + 1 === current ? "current" : "upcoming";
-  return `<nav class="f3-flow" aria-label="Floor 3 journey"><span class="f3-flow__label">AI Governance journey</span><ol>${steps
+  return `<nav class="f3-flow" aria-label="AI Agent Trust journey"><span class="f3-flow__label">AI Governance journey</span><ol>${steps
     .map(([name, note, number], index) => {
       const status = stateFor(index);
       const soon = index === 2 ? '<em class="f3-flow__soon">Coming soon</em>' : "";
@@ -175,7 +175,7 @@ function authView() {
     <main class="auth-page">
       <section class="auth-story">
         <div>
-          <div class="brand"><img class="brand-mark-img" src="/rs-mark-cream.png" alt="" width="32" height="32"><span>RootSystems</span></div>
+          <div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div>
         </div>
         <div class="story-copy">
           <span class="eyebrow">Agent Contract Gap</span>
@@ -254,7 +254,7 @@ function shell(content) {
   ];
   app.innerHTML = `<div class="workspace">
     <aside class="sidebar">
-      <div class="brand"><img class="brand-mark-img" src="/rs-mark-cream.png" alt="" width="32" height="32"><span>RootSystems</span></div><div class="product-tag">Agent Contract Gap</div>
+      <div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div><div class="product-tag">Agent Contract Gap</div>
       <div class="nav-group-label">Review workspace</div>
       <nav aria-label="Main navigation">${nav.map(([view, label, ico]) => `<button class="nav-button ${state.view === view ? "active" : ""}" data-view="${view}">${icon(ico)}<span>${label}</span></button>`).join("")}</nav>
       <div class="sidebar-spacer"></div>

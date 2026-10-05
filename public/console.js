@@ -313,7 +313,7 @@
       });
     });
     content.appendChild(h("div", { class: "panel activate" },
-      h("div", { class: "pill pill--pq", text: "Floor 3 · Agent Governance" }),
+      h("div", { class: "pill pill--pq", text: "Branch 3 · AI Agent Trust" }),
       h("h2", { style: "margin-top:16px" }, "Give every agent a signed scope of authority."),
       h("p", { text: "Activation creates this workspace's private links to Authority Atlas and Trust Proof. It takes a few seconds (up to a minute if a service is waking up) and only happens once." }),
       h("div", { class: "steps" }, stepEls),
