@@ -931,6 +931,8 @@
       }).catch(function (err) { reveal.disabled = false; toast(err.message, true); });
     });
     copyBtn.addEventListener("click", function () { if (revealed) copy(revealed.apiKey, "API key"); });
+    var trunkHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
+    loadTrunk(trunkHost);
     var billingHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
     loadBilling(billingHost, isAdmin);
     var teamHost = h("div", { class: "panel__body" }, h("div", { class: "skeleton" }));
@@ -941,6 +943,9 @@
       h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Team" }), h("p", { text: "Everyone here shares this workspace. Approvers sign with their own keys." }))),
       teamHost);
     content.appendChild(h("div", { class: "grid", style: "max-width:980px" },
+      h("div", { class: "panel", id: "trunk" },
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "RootSystems Trunk" }), h("p", { text: "Verified evidence on top of any plan: proof that holds up with auditors and insurers, outside this console." }))),
+        trunkHost),
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Plan & billing" }), h("p", { text: "Priced per workspace. Payments by Dodo Payments; cancel any time." }))),
         billingHost),
@@ -1072,6 +1077,35 @@
     document.body.appendChild(scrim); document.body.appendChild(modal);
   }
 
+  // RootSystems Trunk: each feature carries its honest status; the button records interest in the
+  // audit log and opens the contact form (no checkout until Trunk has its own Dodo product).
+  function loadTrunk(host) {
+    api("/console/trunk").then(function (t) {
+      clear(host);
+      var head = t.active
+        ? h("p", { style: "margin:0 0 14px" }, h("span", { class: "pill pill--active", text: "Trunk is on" }), " Features marked “Delivered by our team” are run for you while they are built in.")
+        : h("div", { class: "actions", style: "margin:0 0 14px;align-items:center;gap:12px" },
+            h("span", { class: "muted", style: "font-size:13px", text: "Priced by conversation for now. Your plan and price stay as they are." }));
+      if (!t.active) {
+        var talk = h("button", { class: "btn btn--primary btn--sm" }, "Talk to us about Trunk");
+        talk.addEventListener("click", function () {
+          talk.disabled = true;
+          api("/console/trunk/interest", { method: "POST", body: {} })
+            .then(function (r) { talk.disabled = false; window.open(r.url, "_blank", "noopener"); })
+            .catch(function (err) { talk.disabled = false; toast(err.message, true); });
+        });
+        head.appendChild(talk);
+      }
+      host.appendChild(head);
+      host.appendChild(h("div", { class: "plans" }, t.features.map(function (f) {
+        return h("div", { class: "plan" },
+          h("div", { class: "plan__name" }, f.title),
+          h("span", { class: "pill " + (f.status === "live" ? "pill--active" : f.status === "by-hand" ? "pill--pq" : "pill--expired"), text: f.statusLabel }),
+          h("p", { class: "plan__summary", text: f.text }));
+      })));
+    }).catch(function (err) { clear(host); toast(err.message, true); });
+  }
+
   function loadBilling(host, isAdmin) {
     api("/console/billing").then(function (b) {
       clear(host);
@@ -1113,6 +1147,7 @@
       { label: "Go to Action ledger", icon: "ledger", run: function () { location.hash = "#/ledger"; } },
       { label: "Go to Coverage", icon: "coverage", run: function () { location.hash = "#/coverage"; } },
       { label: "Go to Settings", icon: "settings", run: function () { location.hash = "#/settings"; } },
+      { label: "See RootSystems Trunk", icon: "shield", run: function () { location.hash = "#/settings"; setTimeout(function () { var el = document.getElementById("trunk"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 300); } },
       { label: "Issue a certificate", icon: "plus", hint: "new", run: function () { openIssueDrawer(); } },
       { label: "Verify the ledger chain", icon: "shield", run: function () { location.hash = "#/ledger"; toast("Use “Verify now” on the Chain integrity panel"); } },
       { label: "Sign out", icon: "logout", run: function () { signOut(false); } },

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Organization } from "../domain/types.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { PLANS } from "../governance/billing.js";
+import { isTrunkActive, TRUNK_CONTACT_URL, TRUNK_FEATURES, TRUNK_STATUS_LABELS } from "../governance/trunk.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 
 // Agent Governance console API. One workspace login reaches the whole Floor 3 chain: certificates
@@ -65,6 +66,24 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     await app.governance.ensureLink(organization);
     if (!already) await audit(app.store, request, "organization", organization.id, "console.linked");
     return success(request, { linked: true });
+  });
+
+  // RootSystems Trunk (governance/trunk.ts): what it adds, and whether this workspace has it.
+  app.get("/trunk", async (request) => {
+    const organization = await workspace(request);
+    return success(request, {
+      active: isTrunkActive(organization.id),
+      features: TRUNK_FEATURES.map((feature) => ({ ...feature, statusLabel: TRUNK_STATUS_LABELS[feature.status] })),
+      contactUrl: TRUNK_CONTACT_URL,
+    });
+  });
+
+  // "Talk to us about Trunk": recorded in the audit log as a demand signal, then the browser opens
+  // the contact form at the returned url.
+  app.post("/trunk/interest", async (request) => {
+    const organization = await workspace(request);
+    await audit(app.store, request, "organization", organization.id, "console.trunk_interest");
+    return success(request, { url: TRUNK_CONTACT_URL });
   });
 
   app.get("/overview", async (request) => {

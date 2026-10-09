@@ -17,6 +17,7 @@ import { ConsoleBilling } from "./governance/billing.js";
 import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
+import { keyHistory } from "./governance/trunk.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
 import { authRoutes } from "./api/auth-routes.js";
@@ -314,6 +315,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     "/.well-known/rootsystems-signing-key.json",
     { schema: { tags: ["system"], summary: "Public ML-DSA-65 key that signs Assurance Packs" } },
     async () => publicKeyInfo(app.pqSigner),
+  );
+  app.get(
+    "/.well-known/rootsystems-signing-keys.json",
+    { schema: { tags: ["system"], summary: "Signing key history (rootsystems.keyring/v1)" } },
+    async (_request, reply) => {
+      const history = keyHistory(publicKeyInfo(app.pqSigner));
+      if (!history) return reply.code(404).send({ error: "No signing key is configured." });
+      return history;
+    },
   );
   app.get(
     "/ready",
