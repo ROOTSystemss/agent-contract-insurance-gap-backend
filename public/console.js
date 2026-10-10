@@ -1103,7 +1103,45 @@
           h("span", { class: "pill " + (f.status === "live" ? "pill--active" : f.status === "by-hand" ? "pill--pq" : "pill--expired"), text: f.statusLabel }),
           h("p", { class: "plan__summary", text: f.text }));
       })));
+      if (t.active) {
+        var watchHost = h("div", { style: "margin-top:18px" });
+        host.appendChild(watchHost);
+        loadTrunkWatch(watchHost);
+      }
     }).catch(function (err) { clear(host); toast(err.message, true); });
+  }
+
+  // Trunk continuous authority checks: what needs attention today, read live; "Check now" also stores
+  // the result and emails owners/admins about anything new.
+  function loadTrunkWatch(host, ran) {
+    clear(host);
+    host.appendChild(h("div", { class: "skeleton" }));
+    api("/console/trunk/watch").then(function (w) {
+      clear(host);
+      var check = h("button", { class: "btn btn--sm" }, "Check now");
+      check.addEventListener("click", function () {
+        check.disabled = true;
+        api("/console/trunk/watch", { method: "POST", body: {} })
+          .then(function (r) { loadTrunkWatch(host, r); })
+          .catch(function (err) { check.disabled = false; toast(err.message, true); });
+      });
+      host.appendChild(h("div", { class: "actions", style: "align-items:center;gap:12px;margin:0 0 10px" },
+        h("strong", { text: "Continuous authority checks" }),
+        h("span", { class: "muted", style: "font-size:13px", text: "Last daily check: " + (w.checkedAt ? date(w.checkedAt) : "not yet") }),
+        check));
+      if (ran) host.appendChild(h("p", { class: "muted", style: "font-size:13px;margin:0 0 8px", text: ran.newKeys.length ? ran.newKeys.length + " new item(s) since the last check" + (ran.alerted ? "; owners and admins were emailed." : ".") : "Nothing new since the last check." }));
+      if (!w.items.length) {
+        host.appendChild(h("p", { style: "margin:0" }, h("span", { class: "pill pill--active", text: "All clear" }), " Nothing needs attention today."));
+        return;
+      }
+      host.appendChild(h("div", null, w.items.map(function (it) {
+        return h("div", { style: "padding:8px 0;border-top:1px solid var(--line, #e5e7eb)" },
+          h("span", { class: "pill " + (it.severity === "critical" ? "pill--expired" : it.severity === "high" ? "pill--pq" : ""), text: it.severity }),
+          it.isNew ? h("span", { class: "muted", style: "font-size:12px;margin-left:6px", text: "new" }) : null,
+          h("div", { style: "font-weight:600;margin-top:4px", text: it.title }),
+          h("div", { class: "muted", style: "font-size:13px", text: it.why }));
+      })));
+    }).catch(function (err) { clear(host); host.appendChild(h("p", { class: "muted", style: "font-size:13px", text: "Continuous checks: " + err.message })); });
   }
 
   function loadBilling(host, isAdmin) {

@@ -18,6 +18,7 @@ import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
 import { keyHistory } from "./governance/trunk.js";
+import { runAll as runAuthorityWatch } from "./governance/authority-watch.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
 import { authRoutes } from "./api/auth-routes.js";
@@ -220,6 +221,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   let retentionTimer: NodeJS.Timeout | undefined;
+  let watchStartTimer: NodeJS.Timeout | undefined;
+  let watchTimer: NodeJS.Timeout | undefined;
   app.addHook("onReady", async () => {
     const result = await documentService.purgeExpired();
     if (result.deleted || result.failed) app.log.info(result, "document retention sweep completed");
@@ -235,10 +238,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         );
     }, config.RETENTION_SWEEP_INTERVAL_MS);
     retentionTimer.unref();
+    // Trunk: daily continuous authority checks for TRUNK_ORGANIZATION_IDS (TRUNK_WATCH_ENABLED=false
+    // turns it off; never in tests). First run 5 minutes after start, then every 24 hours.
+    if (process.env.TRUNK_WATCH_ENABLED !== "false" && config.NODE_ENV !== "test") {
+      const runWatch = () =>
+        void runAuthorityWatch({ store, gateway: app.governance, appUrl: process.env.APP_URL })
+          .then((run) => {
+            if (run.checked) app.log.info(run, "trunk authority watch completed");
+          })
+          .catch((error: unknown) =>
+            app.log.error({ err: loggableError(error) }, "trunk authority watch failed"),
+          );
+      watchStartTimer = setTimeout(runWatch, 5 * 60_000);
+      watchStartTimer.unref();
+      watchTimer = setInterval(runWatch, 24 * 60 * 60_000);
+      watchTimer.unref();
+    }
   });
 
   app.addHook("onClose", async () => {
     if (retentionTimer) clearInterval(retentionTimer);
+    if (watchStartTimer) clearTimeout(watchStartTimer);
+    if (watchTimer) clearInterval(watchTimer);
     oauthCodes.stop();
     if (store instanceof PrismaStore) await store.disconnect();
   });

@@ -18,6 +18,7 @@ import type {
   ConsoleCertificate,
   ConsoleSubscription,
   ConsoleSigner,
+  TrunkWatchState,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -54,6 +55,7 @@ export class MemoryStore implements Store {
   private consoleSubscriptions = new Map<string, ConsoleSubscription>();
   private billingEvents = new Set<string>();
   private consoleSigners = new Map<string, ConsoleSigner>();
+  private trunkWatch = new Map<string, TrunkWatchState>();
 
   async ready(): Promise<boolean> {
     return true;
@@ -459,6 +461,15 @@ export class MemoryStore implements Store {
     const membership: OrganizationMember = { id: randomUUID(), organizationId, userId: user.id, role: input.role, createdAt: timestamp };
     this.memberships.set(membership.id, membership);
     return membership;
+  }
+
+  async getTrunkWatchState(organizationId: string): Promise<TrunkWatchState | null> {
+    return this.trunkWatch.get(organizationId) ?? null;
+  }
+
+  async saveTrunkWatchState(record: TrunkWatchState): Promise<TrunkWatchState> {
+    this.trunkWatch.set(record.organizationId, { ...record, keys: [...record.keys] });
+    return record;
   }
 
   async listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]> {

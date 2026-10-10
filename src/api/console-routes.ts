@@ -6,6 +6,7 @@ import type { Organization } from "../domain/types.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { PLANS } from "../governance/billing.js";
 import { isTrunkActive, TRUNK_CONTACT_URL, TRUNK_FEATURES, TRUNK_STATUS_LABELS } from "../governance/trunk.js";
+import { checkWorkspace, computeAuthorityWatch, gatherInputs } from "../governance/authority-watch.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 
 // Agent Governance console API. One workspace login reaches the whole Floor 3 chain: certificates
@@ -84,6 +85,44 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     const organization = await workspace(request);
     await audit(app.store, request, "organization", organization.id, "console.trunk_interest");
     return success(request, { url: TRUNK_CONTACT_URL });
+  });
+
+  // Trunk: continuous authority checks (governance/authority-watch.ts). GET reads the items live;
+  // POST runs the check now, stores the new key set, alerts owners/admins on what is new and audits it.
+  const TRUNK_REQUIRED = "Continuous authority checks are part of RootSystems Trunk.";
+  app.get("/trunk/watch", async (request) => {
+    const organization = await workspace(request);
+    if (!isTrunkActive(organization.id)) throw new AppError(402, "TRUNK_REQUIRED", TRUNK_REQUIRED);
+    const [inputs, state] = await Promise.all([
+      gatherInputs(app.governance, organization),
+      app.store.getTrunkWatchState(organization.id),
+    ]);
+    const result = computeAuthorityWatch(inputs);
+    const seen = new Set(state?.keys ?? []);
+    return success(request, {
+      ...result,
+      items: result.items.map((item) => ({ ...item, isNew: state ? !seen.has(item.key) : true })),
+      checkedAt: state?.checkedAt ?? null,
+      alertedAt: state?.alertedAt ?? null,
+    });
+  });
+
+  app.post("/trunk/watch", async (request) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    if (!isTrunkActive(organization.id)) throw new AppError(402, "TRUNK_REQUIRED", TRUNK_REQUIRED);
+    const { result, newItems, alerted } = await checkWorkspace(organization, {
+      store: app.store,
+      gateway: app.governance,
+      appUrl: process.env.APP_URL,
+    });
+    await audit(app.store, request, "organization", organization.id, "trunk.authority_watch.checked", {
+      items: result.items.length,
+      newItems: newItems.length,
+      critical: result.items.filter((item) => item.severity === "critical").length,
+      alerted,
+    });
+    return success(request, { ...result, newKeys: newItems.map((item) => item.key), alerted });
   });
 
   app.get("/overview", async (request) => {

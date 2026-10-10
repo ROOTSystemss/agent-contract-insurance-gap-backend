@@ -17,6 +17,7 @@ import type {
   ConsoleCertificate,
   ConsoleSubscription,
   ConsoleSigner,
+  TrunkWatchState,
   User,
 } from "../domain/types.js";
 
@@ -130,6 +131,8 @@ export interface Store {
   // true the first time an event id is seen, false for a redelivery
   claimBillingWebhookEvent(id: string, type: string): Promise<boolean>;
   listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]>;
+  getTrunkWatchState(organizationId: string): Promise<TrunkWatchState | null>;
+  saveTrunkWatchState(record: TrunkWatchState): Promise<TrunkWatchState>;
   addConsoleSigner(record: Omit<ConsoleSigner, "createdAt">): Promise<ConsoleSigner>;
   // Adds a new user to an existing workspace (team invite). Throws EMAIL_EXISTS if the email is taken.
   addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember>;

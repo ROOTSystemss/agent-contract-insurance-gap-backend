@@ -48,8 +48,8 @@ export const TRUNK_FEATURES: TrunkFeature[] = [
   {
     id: "continuous",
     title: "Continuous authority checks",
-    text: "Certificates, limits and ledger verdicts are re-checked on a schedule, with an alert when an agent's authority drifts from what was approved.",
-    status: "coming",
+    text: "Every day certificates, limits and ledger verdicts are re-checked: expiring certificates, agents left without one, actions after a revocation, daily limits exceeded and a ledger chain that no longer verifies. Owners and admins are emailed when something new appears.",
+    status: "live",
   },
 ];
 

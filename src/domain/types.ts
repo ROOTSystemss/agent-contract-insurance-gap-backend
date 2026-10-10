@@ -137,6 +137,14 @@ export interface ConsoleCertificate {
   createdAt: string;
 }
 
+// RootSystems Trunk continuous authority checks: the item keys seen at the last daily check.
+export interface TrunkWatchState {
+  organizationId: string;
+  keys: string[];
+  checkedAt: string;
+  alertedAt: string | null;
+}
+
 // Agent Governance console plan, mirrored from Dodo Payments webhooks. No record = free plan.
 export interface ConsoleSubscription {
   organizationId: string;

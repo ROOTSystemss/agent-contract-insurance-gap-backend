@@ -18,6 +18,7 @@ import type {
   ConsoleCertificate,
   ConsoleSubscription,
   ConsoleSigner,
+  TrunkWatchState,
   Role,
   TextSegment,
 } from "../domain/types.js";
@@ -771,6 +772,31 @@ export class PrismaStore implements Store {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new Error("EMAIL_EXISTS");
       throw error;
     }
+  }
+
+  async getTrunkWatchState(organizationId: string): Promise<TrunkWatchState | null> {
+    const row = await this.client.trunkWatchState.findUnique({ where: { organizationId } });
+    if (!row) return null;
+    return {
+      organizationId: row.organizationId,
+      keys: Array.isArray(row.keys) ? row.keys.map(String) : [],
+      checkedAt: iso(row.checkedAt),
+      alertedAt: row.alertedAt ? iso(row.alertedAt) : null,
+    };
+  }
+
+  async saveTrunkWatchState(record: TrunkWatchState): Promise<TrunkWatchState> {
+    const data = {
+      keys: record.keys,
+      checkedAt: new Date(record.checkedAt),
+      alertedAt: record.alertedAt ? new Date(record.alertedAt) : null,
+    };
+    await this.client.trunkWatchState.upsert({
+      where: { organizationId: record.organizationId },
+      create: { organizationId: record.organizationId, ...data },
+      update: data,
+    });
+    return record;
   }
 
   async listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]> {

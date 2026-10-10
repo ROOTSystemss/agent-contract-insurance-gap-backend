@@ -77,6 +77,7 @@ model Organization {
   consoleCertificates ConsoleCertificate[]
   consoleSubscription ConsoleSubscription?
   consoleSigners      ConsoleSigner[]
+  trunkWatchState     TrunkWatchState?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 }
@@ -333,4 +334,14 @@ model ConsoleSigner {
   createdAt       DateTime     @default(now())
 
   @@id([organizationId, userId])
+}
+
+// RootSystems Trunk continuous authority checks: only item keys (certificate/agent/action ids + rule
+// names) and times, to know what is new since the last daily check.
+model TrunkWatchState {
+  organizationId String       @id @db.Uuid
+  keys           Json
+  checkedAt      DateTime
+  alertedAt      DateTime?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
