@@ -88,8 +88,14 @@ describe("pack timestamps (logic)", () => {
     });
   });
 
-  it("the Trunk panel lists two timestamps as live", () => {
-    expect(TRUNK_FEATURES.find((f) => f.id === "two-timestamps")?.status).toBe("live");
+  it("the Trunk panel lists two timestamps as live only where FEATURE_RFC3161=1", () => {
+    const saved = process.env.FEATURE_RFC3161;
+    const feature = TRUNK_FEATURES.find((f) => f.id === "two-timestamps");
+    process.env.FEATURE_RFC3161 = "";
+    expect(feature?.status).toBe("by-hand");
+    process.env.FEATURE_RFC3161 = "1";
+    expect(feature?.status).toBe("live");
+    process.env.FEATURE_RFC3161 = saved;
   });
 });
 

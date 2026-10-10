@@ -43,7 +43,10 @@ export const TRUNK_FEATURES: TrunkFeature[] = [
     id: "two-timestamps",
     title: "Two independent timestamps",
     text: "A Bitcoin-anchored OpenTimestamps proof plus a standard RFC 3161 timestamp from a public timestamp authority on every Assurance Pack, checkable at the pack verify endpoint.",
-    status: "live",
+    // Built in; live where FEATURE_RFC3161=1 (the RFC 3161 half is off without it).
+    get status(): TrunkStatus {
+      return process.env.FEATURE_RFC3161 === "1" ? "live" : "by-hand";
+    },
   },
   {
     id: "continuous",
