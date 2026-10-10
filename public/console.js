@@ -1085,7 +1085,7 @@
       var head = t.active
         ? h("p", { style: "margin:0 0 14px" }, h("span", { class: "pill pill--active", text: "Trunk is on" }), " Features marked “Delivered by our team” are run for you while they are built in.")
         : h("div", { class: "actions", style: "margin:0 0 14px;align-items:center;gap:12px" },
-            h("span", { class: "muted", style: "font-size:13px", text: "Priced by conversation for now. Your plan and price stay as they are." }));
+            h("span", { class: "muted", style: "font-size:13px", text: "From $299/month on top of your plan, or from $799/month across RootSystems products. Your plan and price stay as they are." }));
       if (!t.active) {
         var talk = h("button", { class: "btn btn--primary btn--sm" }, "Talk to us about Trunk");
         talk.addEventListener("click", function () {
