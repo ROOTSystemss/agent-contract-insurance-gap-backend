@@ -3,6 +3,8 @@ import { z } from "zod";
 import { AnalysisService } from "../analysis/analysis-service.js";
 import { ReportService } from "../reports/report-service.js";
 import { buildAssurancePack, verifyAssurancePack } from "../reports/assurance-pack.js";
+import { timestampPack, verifyPackTimestamps } from "../reports/pack-timestamps.js";
+import { isTrunkActive } from "../governance/trunk.js";
 import { reconcile, requireVerifiedCertificate } from "../authority/certificate.js";
 import type { DocumentRecord, Finding } from "../domain/types.js";
 import { generateReportPdf } from "../reports/pdf-report.js";
@@ -99,7 +101,11 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
     if (!analysis) throw notFound("Analysis");
     // A finished analysis may carry warnings; they are included in the pack rather than blocking it.
     if (analysis.state !== "completed" && analysis.state !== "completed_with_warnings") {
-      throw new AppError(409, "ANALYSIS_NOT_COMPLETED", "The analysis must be completed before an assurance pack can be built.");
+      throw new AppError(
+        409,
+        "ANALYSIS_NOT_COMPLETED",
+        "The analysis must be completed before an assurance pack can be built.",
+      );
     }
     const project = await app.store.getProject(orgId, analysis.projectId);
     const agent = await app.store.getAgent(orgId, analysis.agentProfileId);
@@ -133,12 +139,16 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
       },
       app.pqSigner,
     );
+    // Trunk workspaces also get two independent timestamps on the contentHash (best effort).
+    const timestamps = isTrunkActive(orgId) ? await timestampPack(built.contentHash) : null;
     await audit(app.store, request, "analysis", id, "assurance_pack.generate", {
       projectId: analysis.projectId,
       contentHash: built.contentHash,
       withCertificate: reconciliation !== null,
+      rfc3161: Boolean(timestamps?.rfc3161),
+      openTimestamps: Boolean(timestamps?.openTimestamps),
     });
-    return success(request, built);
+    return success(request, { ...built, timestamps });
   });
 
   // Recomputes a pack's fingerprint. Proves the pack is unchanged since it was built.
@@ -147,10 +157,38 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
       .object({
         pack: z.record(z.string(), z.unknown()),
         contentHash: z.string().regex(/^[0-9a-fA-F]{64}$/),
-        signature: z.object({ value: z.string().min(1).max(8000), publicKey: z.string().max(4000).optional() }).passthrough().optional(),
+        signature: z
+          .object({
+            value: z.string().min(1).max(8000),
+            publicKey: z.string().max(4000).optional(),
+          })
+          .passthrough()
+          .optional(),
+        timestamps: z
+          .object({
+            rfc3161: z
+              .object({ tokenBase64: z.string().min(1).max(20000) })
+              .passthrough()
+              .nullish(),
+            openTimestamps: z
+              .object({ proofBase64: z.string().min(1).max(20000) })
+              .passthrough()
+              .nullish(),
+          })
+          .passthrough()
+          .nullish(),
       })
       .parse(request.body);
-    return success(request, verifyAssurancePack(body.pack, body.contentHash, body.signature, app.pqSigner));
+    const result = verifyAssurancePack(body.pack, body.contentHash, body.signature, app.pqSigner);
+    if (!body.timestamps) return success(request, result);
+    // Timestamps are checked against the hash recomputed from the pack, not the one supplied.
+    return success(request, {
+      ...result,
+      timestamps: verifyPackTimestamps(result.computedHash, {
+        rfc3161: body.timestamps.rfc3161 ?? undefined,
+        openTimestamps: body.timestamps.openTimestamps ?? undefined,
+      }),
+    });
   });
 
   app.get("/:id/report.pdf", async (request, reply) => {
