@@ -259,7 +259,7 @@
     clear(app).appendChild(h("div", { class: "empty", style: "min-height:100vh" }, icon("loader", "spin"), h("p", { text: "Opening your console…" })));
     Promise.all([api("/auth/me"), api("/console/status")]).then(function (res) {
       state.me = res[0];
-      state.status = res[1];
+      state.status = res[1]; if (res[1] && res[1].trunkEnabled === false) state.trunkEnabled = false;
       render();
     }).catch(function (err) {
       if (err.status === 401) return;
@@ -1081,6 +1081,8 @@
   // audit log and opens the contact form (no checkout until Trunk has its own Dodo product).
   function loadTrunk(host) {
     api("/console/trunk").then(function (t) {
+      // Trunk parked on this server: no panel, no palette entry.
+      if (t.enabled === false) { state.trunkEnabled = false; var panel = document.getElementById("trunk"); if (panel) panel.remove(); return; }
       clear(host);
       var head = t.active
         ? h("p", { style: "margin:0 0 14px" }, h("span", { class: "pill pill--active", text: "Trunk is on" }), " Features marked “Delivered by our team” are run for you while they are built in.")
@@ -1185,11 +1187,11 @@
       { label: "Go to Action ledger", icon: "ledger", run: function () { location.hash = "#/ledger"; } },
       { label: "Go to Coverage", icon: "coverage", run: function () { location.hash = "#/coverage"; } },
       { label: "Go to Settings", icon: "settings", run: function () { location.hash = "#/settings"; } },
-      { label: "See RootSystems Trunk", icon: "shield", run: function () { location.hash = "#/settings"; setTimeout(function () { var el = document.getElementById("trunk"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 300); } },
+      state.trunkEnabled === false ? null : { label: "See RootSystems Trunk", icon: "shield", run: function () { location.hash = "#/settings"; setTimeout(function () { var el = document.getElementById("trunk"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 300); } },
       { label: "Issue a certificate", icon: "plus", hint: "new", run: function () { openIssueDrawer(); } },
       { label: "Verify the ledger chain", icon: "shield", run: function () { location.hash = "#/ledger"; toast("Use “Verify now” on the Chain integrity panel"); } },
       { label: "Sign out", icon: "logout", run: function () { signOut(false); } },
-    ];
+    ].filter(Boolean);
     var scrim = h("div", { class: "scrim" });
     var input = h("input", { placeholder: "Type a command…", "aria-label": "Command" });
     var list = h("ul", { role: "listbox" });

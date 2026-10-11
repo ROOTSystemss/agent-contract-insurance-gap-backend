@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Organization } from "../domain/types.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { PLANS } from "../governance/billing.js";
-import { isTrunkActive, TRUNK_CONTACT_URL, TRUNK_FEATURES, TRUNK_STATUS_LABELS } from "../governance/trunk.js";
+import { isTrunkActive, isTrunkEnabled, TRUNK_CONTACT_URL, TRUNK_FEATURES, TRUNK_STATUS_LABELS } from "../governance/trunk.js";
 import { checkWorkspace, computeAuthorityWatch, gatherInputs } from "../governance/authority-watch.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 
@@ -54,6 +54,7 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
       configured: app.governance.status(),
       linked,
       workspace: { id: organization.id, name: organization.name },
+      trunkEnabled: isTrunkEnabled(),
       // Public service address shown in Settings (the key itself is only in /connection).
       trustProofUrl: app.governance.trustProofUrl(),
     });
@@ -72,7 +73,10 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   // RootSystems Trunk (governance/trunk.ts): what it adds, and whether this workspace has it.
   app.get("/trunk", async (request) => {
     const organization = await workspace(request);
+    // Parked (governance/trunk.ts isTrunkEnabled): the Settings panel hides itself.
+    if (!isTrunkEnabled()) return success(request, { enabled: false });
     return success(request, {
+      enabled: true,
       active: isTrunkActive(organization.id),
       features: TRUNK_FEATURES.map((feature) => ({ ...feature, statusLabel: TRUNK_STATUS_LABELS[feature.status] })),
       contactUrl: TRUNK_CONTACT_URL,
@@ -82,6 +86,7 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   // "Talk to us about Trunk": recorded in the audit log as a demand signal, then the browser opens
   // the contact form at the returned url.
   app.post("/trunk/interest", async (request) => {
+    if (!isTrunkEnabled()) throw notFound("Trunk");
     const organization = await workspace(request);
     await audit(app.store, request, "organization", organization.id, "console.trunk_interest");
     return success(request, { url: TRUNK_CONTACT_URL });

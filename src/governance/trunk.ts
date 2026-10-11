@@ -56,10 +56,21 @@ export const TRUNK_FEATURES: TrunkFeature[] = [
   },
 ];
 
+// Master switch. Trunk is parked until its storefront is decided: on the live server
+// (NODE_ENV=production) it is OFF unless TRUNK_ENABLED=1 - no Settings panel, no Trunk endpoints,
+// no Trunk features even for a granted workspace. Local runs and tests have it on unless
+// TRUNK_ENABLED=0.
+export function isTrunkEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.TRUNK_ENABLED === "1") return true;
+  if (env.TRUNK_ENABLED === "0") return false;
+  return env.NODE_ENV !== "production";
+}
+
 export function isTrunkActive(
   organizationId: string,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (!isTrunkEnabled(env)) return false;
   return String(env.TRUNK_ORGANIZATION_IDS ?? "")
     .split(",")
     .map((value) => value.trim())
