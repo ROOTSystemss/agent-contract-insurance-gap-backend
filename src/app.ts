@@ -59,13 +59,25 @@ export interface BuildAppOptions {
   governance?: Partial<GatewayOptions>;
 }
 
-function isAllowedOrigin(request: FastifyRequest, configuredOrigins: string[]): boolean {
+// Our own origin comes from PUBLIC_BASE_URL - never from the request's Host header, which a client
+// controls. Outside production the request's own host is also accepted, for local development.
+export function isAllowedOrigin(
+  request: FastifyRequest,
+  configuredOrigins: string[],
+  publicBaseUrl: string,
+  production: boolean,
+): boolean {
   const origin = request.headers.origin;
   if (!origin) return true;
   if (configuredOrigins.includes(origin)) return true;
-  if (!request.headers.host) return false;
+  if (origin === new URL(publicBaseUrl).origin) return true;
+  if (production || !request.headers.host) return false;
   return origin === `${request.protocol}://${request.headers.host}`;
 }
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+// Dodo calls this server-to-server; it is authenticated by its Standard Webhooks signature instead.
+const BROWSER_CHECK_EXEMPT = new Set(["/api/v1/billing/webhook"]);
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
@@ -168,8 +180,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   await app.register(cors, {
     delegator(request, callback) {
-      if (isAllowedOrigin(request, config.corsOrigins)) {
+      if (isAllowedOrigin(request, config.corsOrigins, config.PUBLIC_BASE_URL, config.NODE_ENV === "production")) {
         callback(null, { origin: true, credentials: false });
+        return;
+      }
+      // Reading (GET, HEAD, OPTIONS) is never refused: the response simply carries no permission for
+      // another site to read it. Only state-changing requests from a foreign origin are rejected.
+      const path = request.url.split("?")[0] ?? "";
+      if (SAFE_METHODS.has(request.method) || BROWSER_CHECK_EXEMPT.has(path)) {
+        callback(null, { origin: false });
         return;
       }
       callback(new AppError(403, "CORS_ORIGIN_DENIED", "The request origin is not allowed."));
