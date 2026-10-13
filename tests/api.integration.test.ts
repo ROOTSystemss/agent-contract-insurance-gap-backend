@@ -141,12 +141,27 @@ describe("API integration", () => {
     expect(sameOrigin.statusCode).toBe(201);
     expect(sameOrigin.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:4400");
 
+    // A read from an unrelated origin is answered but carries no permission for that site to read
+    // it; a state-changing request from it is rejected.
     const unrelatedOrigin = await app.inject({
       method: "GET",
       url: "/health",
       headers: { host: "127.0.0.1:4400", origin: "https://untrusted.example" },
     });
-    expect(unrelatedOrigin.statusCode).toBe(403);
+    expect(unrelatedOrigin.statusCode).not.toBe(403);
+    expect(unrelatedOrigin.headers["access-control-allow-origin"]).toBeUndefined();
+    const unrelatedWrite = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/register",
+      headers: { host: "127.0.0.1:4400", origin: "https://untrusted.example" },
+      payload: {
+        email: "unrelated@example.test",
+        name: "Unrelated",
+        organizationName: "Unrelated Fictional Ltd",
+        password: "Correct Horse Battery 123!",
+      },
+    });
+    expect(unrelatedWrite.statusCode).toBe(403);
   });
 
   it("enforces role restrictions", async () => {
