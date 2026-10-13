@@ -185,7 +185,7 @@
         h("div", { class: "auth__brand" }, h("img", { src: "/rs-logo.svg", alt: "" }), "RootSystems"),
         h("div", null,
           h("h1", { class: "auth__title" }, "Authority your agents ", h("em", { text: "can prove." })),
-          h("p", { class: "auth__lead", text: "Issue every AI agent a signed certificate of what it may do, watch each action checked against it in real time, and revoke it with one switch. Evidence your auditors, customers and insurers can verify without trusting us." }),
+          h("p", { class: "auth__lead", text: "Issue every AI agent a signed certificate of what it may do, watch each action checked against it in real time, and revoke it with one switch. Signed evidence your auditors, customers and insurers can check." }),
           h("ul", { class: "auth__points" },
             h("li", null, icon("shield"), h("span", null, h("strong", { text: "Post-quantum signed. " }), "Certificates and ledger checkpoints carry ML-DSA-65 signatures (NIST FIPS 204).")),
             h("li", null, icon("bolt"), h("span", null, h("strong", { text: "Enforced live. " }), "Over-limit, out-of-scope or revoked actions are blocked and recorded.")),
@@ -784,7 +784,7 @@
   function openDecisionDrawer(id, data, after) {
     var host = h("div", { class: "form-grid" }, h("div", { class: "skeleton" }));
     var foot = h("div", { style: "display:flex;gap:10px" });
-    var d = drawer("Approval request", "Signed with each person's own key; verifiable without trusting RootSystems.", [host], [foot]);
+    var d = drawer("Approval request", "Signed with each person's own key.", [host], [foot]);
     api("/console/approvals/" + id).then(function (x) {
       clear(host);
       var mine = data.me && (x.requiredSigners || []).some(function (e) { return e.toLowerCase() === data.me.email.toLowerCase(); });
