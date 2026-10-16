@@ -282,6 +282,13 @@ a {
   border-color: var(--orange);
   box-shadow: 0 0 0 3px rgba(233, 120, 37, 0.13);
 }
+/* Example text must not look like a value already filled in. */
+.field input::placeholder,
+.field textarea::placeholder {
+  color: #a3adb8;
+  font-style: italic;
+  opacity: 1;
+}
 .field-hint {
   color: #7a8795;
   font-size: 0.72rem;

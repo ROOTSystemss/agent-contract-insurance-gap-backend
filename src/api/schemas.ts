@@ -38,7 +38,7 @@ export const subdivisionCodeSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .regex(/^[A-Z]{2}-[A-Z0-9]{1,3}$/)
+  .regex(/^[A-Z]{2}-[A-Z0-9]{1,3}$/, "Use a state or region code like US-IL (country code, a dash, then the region).")
   .optional();
 
 export const paginationSchema = z.object({

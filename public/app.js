@@ -54,7 +54,7 @@ const initials = (value = "") =>
     .toUpperCase() || "RS";
 const formDataObject = (form) => Object.fromEntries(new FormData(form).entries());
 
-// ---- Floor 3 handoff from AI Compliance Readiness -------------------------
+// ---- Floor 3 handoff from Standards Readiness -------------------------
 // Arrives as URL parameters, so it is untrusted input: every value is
 // validated/clamped here and only ever written to the DOM via .value or
 // textContent, never innerHTML. It only pre-fills a form the user must confirm.
@@ -77,7 +77,7 @@ function captureHandoff() {
       sessionStorage.setItem(
         HANDOFF_KEY,
         JSON.stringify({
-          source: "AI Compliance Readiness",
+          source: "Standards Readiness",
           subject,
           band: HANDOFF_BANDS.includes(band) ? band : null,
           score: cleanInt(params.get("score"), 100),
@@ -115,7 +115,7 @@ function handoffPrefill(handoff) {
   return {
     name: `Coverage check: ${handoff.subject}`.slice(0, 120),
     description:
-      `Started from an AI Compliance Readiness assessment of "${handoff.subject}"` +
+      `Started from an Standards Readiness assessment of "${handoff.subject}"` +
       (facts.length ? ` (${facts.join(", ")}; self-reported, not verified here)` : "") +
       ". Review whether contracts and insurance actually cover the authority this AI system has.",
   };
@@ -124,13 +124,13 @@ function handoffPrefill(handoff) {
 // ---- Floor 3 journey indicator (Readiness -> Contract Gap -> Trust Proof) ----
 function flowStrip(current) {
   const steps = [
-    ["AI Compliance Readiness", "Flag readiness gaps", "1"],
-    ["Agent Contract Gap", "Check contracts and insurance", "2"],
-    ["Trust Proof", "Sign the decision", "3"],
+    ["Standards Readiness", "Flag readiness gaps", "1"],
+    ["Contract & Insurance Gap", "Check contracts and insurance", "2"],
+    ["Named Sign-off", "Sign the decision", "3"],
   ];
   const stateFor = (index) =>
     index + 1 < current ? "done" : index + 1 === current ? "current" : "upcoming";
-  return `<nav class="f3-flow" aria-label="AI Agent Trust journey"><span class="f3-flow__label">AI Governance journey</span><ol>${steps
+  return `<nav class="f3-flow" aria-label="AI Agent Trust journey"><span class="f3-flow__label">AI Agent Trust journey</span><ol>${steps
     .map(([name, note, number], index) => {
       const status = stateFor(index);
       const soon = index === 2 ? '<em class="f3-flow__soon">Coming soon</em>' : "";
@@ -178,7 +178,7 @@ function authView() {
           <div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div>
         </div>
         <div class="story-copy">
-          <span class="eyebrow">Agent Contract Gap</span>
+          <span class="eyebrow">AI Agent Trust</span>
           <h1>Know where your agent's <em>authority</em> outruns the paperwork.</h1>
           <p>Map AI-agent capabilities against contracts and insurance evidence with a deterministic, review-ready workflow.</p>
           <div class="trust-row"><span>Evidence linked</span><span>Deterministic by default</span><span>Built for expert review</span></div>
@@ -254,16 +254,17 @@ function shell(content) {
   ];
   app.innerHTML = `<div class="workspace">
     <aside class="sidebar">
-      <div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div><div class="product-tag">Agent Contract Gap</div>
+      <div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div><div class="product-tag">AI Agent Trust</div>
       <div class="nav-group-label">Review workspace</div>
       <nav aria-label="Main navigation">${nav.map(([view, label, ico]) => `<button class="nav-button ${state.view === view ? "active" : ""}" data-view="${view}">${icon(ico)}<span>${label}</span></button>`).join("")}</nav>
+      <a class="nav-button" href="/console#/settings" id="plans-link">${icon("overview")}<span>Plans &amp; billing</span></a>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-card"><strong>Decision support</strong><p>Results identify attention areas. Always involve qualified legal and insurance professionals.</p></div>
       <div class="user-menu"><div class="avatar">${escapeHtml(initials(user.name))}</div><div class="user-copy"><strong>${escapeHtml(user.name)}</strong><span>${escapeHtml(org.name)}</span></div></div>
     </aside>
     <section class="main">
       <header class="topbar"><div class="breadcrumb"><span>${escapeHtml(org.name || "Workspace")}</span><span class="slash">/</span><strong>${escapeHtml(state.project?.name || "All projects")}</strong></div><button class="button button-secondary session-signout" data-logout aria-label="Sign out">Sign out</button></header>
-      <div class="content">${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Governance suite · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
+      <div class="content">${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Agent Trust · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
     </section>
   </div>`;
   bindShell();
@@ -279,7 +280,7 @@ function bindShell() {
       link.download = "atlas-governance-summary.json";
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("Summary exported. Import it in AI Governance; it contains project names and statuses.");
+      toast("Summary exported. Import it in Standards Readiness; it contains project names and statuses.");
     } catch (error) { toast(error.message, "error"); }
   });
   document
@@ -410,7 +411,7 @@ function openProjectSettingsModal() {
       <div class="field full"><label for="settings-name">Review name</label><input id="settings-name" name="name" required minlength="2" value="${escapeHtml(project.name)}" /></div>
       <div class="field full"><label for="settings-description">Purpose</label><textarea id="settings-description" name="description">${escapeHtml(project.description || "")}</textarea></div>
       <div class="field"><label for="settings-country">Primary country</label><input id="settings-country" name="primaryCountryCode" maxlength="2" required value="${escapeHtml(project.primaryCountryCode)}" /></div>
-      <div class="field"><label for="settings-subdivision">State / subdivision</label><input id="settings-subdivision" name="primarySubdivisionCode" value="${escapeHtml(project.primarySubdivisionCode || "")}" /></div>
+      <div class="field"><label for="settings-subdivision">State / subdivision</label><input id="settings-subdivision" name="primarySubdivisionCode" value="${escapeHtml(project.primarySubdivisionCode || "")}" placeholder="e.g. US-IL" pattern="[A-Za-z]{2}-[A-Za-z0-9]{1,3}" title="Use a code like US-IL: country code, a dash, then the region." /></div>
       <div class="field full"><label for="settings-affected">Other affected countries</label><input id="settings-affected" name="affectedCountryCodes" value="${escapeHtml(project.affectedCountryCodes.join(", "))}" /></div>
       <div class="field full"><p id="settings-message" class="form-message"></p><div class="form-actions split-actions"><button type="button" class="button button-ghost danger-text" data-delete-project>Delete review</button><span><button type="button" class="button button-secondary" data-close-modal>Cancel</button> <button type="submit" class="button button-primary">Save changes</button></span></div></div>
     </form></div>`;
@@ -481,7 +482,7 @@ function openProjectModal(prefill = {}) {
       <div class="field full"><label for="project-name">Review name</label><input id="project-name" name="name" required minlength="2" placeholder="Vendor purchasing agent review" /></div>
       <div class="field full"><label for="project-description">Purpose</label><textarea id="project-description" name="description" placeholder="Review authority in customer, vendor, and insurance documents."></textarea></div>
       <div class="field"><label for="project-country">Primary country</label><select id="project-country" name="primaryCountryCode"><option value="US">United States</option><option value="GB">United Kingdom</option><option value="CA">Canada</option><option value="IN">India</option><option value="AU">Australia</option></select></div>
-      <div class="field"><label for="project-subdivision">State / subdivision</label><input id="project-subdivision" name="primarySubdivisionCode" placeholder="US-IL" /></div>
+      <div class="field"><label for="project-subdivision">State / subdivision</label><input id="project-subdivision" name="primarySubdivisionCode" placeholder="e.g. US-IL" pattern="[A-Za-z]{2}-[A-Za-z0-9]{1,3}" title="Use a code like US-IL: country code, a dash, then the region." /><span class="field-hint">Optional. Format: US-IL.</span></div>
       <div class="field full"><label for="affected-countries">Other affected countries</label><input id="affected-countries" name="affectedCountryCodes" placeholder="GB, CA" /><span class="field-hint">Optional, comma-separated ISO country codes.</span></div>
       <div class="field full"><p id="project-message" class="form-message"></p><div class="form-actions"><button type="button" class="button button-secondary" data-close-modal>Cancel</button><button type="submit" class="button button-primary">Create review →</button></div></div>
     </form></div>`;
@@ -554,7 +555,7 @@ const capabilityFields = [
 
 function renderAgent() {
   const agent = state.agents[0] || {};
-  shell(`${pageHeader("Step 1 of 3", agent.id ? "Agent authority profile" : "Describe the agent", "Capture what the system can actually do. Precise capability boundaries make the comparison more useful.", agent.id ? '<span class="badge badge-green">Profile saved</span>' : '<button type="button" class="button button-secondary" data-fill-example>Fill example profile</button>')}
+  shell(`${pageHeader("Contract & Insurance Gap · part 1 of 3", agent.id ? "Agent authority profile" : "Describe the agent", "Capture what the system can actually do. Precise capability boundaries make the comparison more useful.", agent.id ? '<span class="badge badge-green">Profile saved</span>' : '<button type="button" class="button button-secondary" data-fill-example>Fill example profile</button>')}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step"></i><i class="progress-step"></i></div>
     <form id="agent-form" class="card form-card">
       <section class="form-section"><div class="form-section-title"><span class="section-number">01</span><div><h3>Identity and deployment</h3><p>Basic operating context for this agent.</p></div></div>
@@ -595,7 +596,7 @@ function renderAgent() {
           <div class="field full"><label for="notes">Reviewer notes</label><textarea id="notes" name="notes">${escapeHtml(agent.notes || "")}</textarea></div>
         </div>
       </section>
-      <p id="agent-message" class="form-message"></p><div class="form-actions"><button type="submit" class="button button-primary">${agent.id ? "Update profile" : "Save and add evidence"} →</button></div>
+      <p id="agent-message" class="form-message"></p><div class="form-actions">${agent.id ? '<button type="button" class="button button-secondary" data-view="evidence">Go to evidence →</button>' : ""}<button type="submit" class="button button-primary">${agent.id ? "Update profile" : "Save and add evidence →"}</button></div>
     </form>${agent.id ? '<section id="authority-certificate" class="card authority-card" aria-label="Authority certificate"></section>' : ""}`);
   document.querySelector("#agent-form").addEventListener("submit", submitAgent);
   document.querySelector("[data-fill-example]")?.addEventListener("click", fillExampleAgent);
@@ -706,8 +707,8 @@ async function submitAgent(event) {
       { method: existing ? "PATCH" : "POST", body: JSON.stringify(payload) },
     );
     state.agents = [saved];
-    toast(existing ? "Agent profile updated." : "Agent profile saved.");
-    if (!existing) navigate("evidence");
+    toast(existing ? "Agent profile updated." : "Agent profile saved. Now add the evidence.");
+    if (!existing) await navigate("evidence");
     else renderAgent();
   } catch (error) {
     form.querySelector("#agent-message").textContent = error.message;
@@ -721,7 +722,7 @@ async function loadDocuments() {
 }
 
 function renderEvidence() {
-  shell(`${pageHeader("Step 2 of 3", "Add governing evidence", "Upload the agreements and insurance materials that may define, limit, or cover the agent's authority.", `<span class="badge ${state.documents.length ? "badge-green" : "badge-gray"}">${state.documents.length} document${state.documents.length === 1 ? "" : "s"}</span>`)}
+  shell(`${pageHeader("Contract & Insurance Gap · part 2 of 3", "Add governing evidence", "Upload the agreements and insurance materials that may define, limit, or cover the agent's authority.", `<span class="badge ${state.documents.length ? "badge-green" : "badge-gray"}">${state.documents.length} document${state.documents.length === 1 ? "" : "s"}</span>`)}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step done"></i><i class="progress-step"></i></div>
     <div class="grid grid-2">
       <form id="upload-form" class="card card-pad">
@@ -838,11 +839,11 @@ function renderAnalysis() {
   const agent = state.agents[0];
   if (!agent) {
     shell(
-      `${pageHeader("Step 3 of 3", "Analysis", "An agent profile is required before the comparison can run.")}<div class="card empty-state"><div class="empty-icon">!</div><h3>Agent profile required</h3><p>Describe the agent's real capabilities before starting an analysis.</p><button class="button button-primary" data-view="agent">Create profile</button></div>`,
+      `${pageHeader("Contract & Insurance Gap · part 3 of 3", "Analysis", "An agent profile is required before the comparison can run.")}<div class="card empty-state"><div class="empty-icon">!</div><h3>Agent profile required</h3><p>Describe the agent's real capabilities before starting an analysis.</p><button class="button button-primary" data-view="agent">Create profile</button></div>`,
     );
     return;
   }
-  shell(`${flowStrip(2, { reportReady: Boolean(report) })}${pageHeader("Step 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-download-pdf>Download PDF</button><button class="button button-secondary" data-print-report>Print</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
+  shell(`${flowStrip(2, { reportReady: Boolean(report) })}${pageHeader("Contract & Insurance Gap · part 3 of 3", report ? "Review findings" : "Run the comparison", "Generate deterministic findings that separate document facts, agent facts, system inferences, and professional review questions.", report ? '<button class="button button-secondary" data-download-report>Export JSON</button><button class="button button-secondary" data-download-pdf>Download PDF</button><button class="button button-secondary" data-print-report>Print</button><button class="button button-primary" data-rerun>Rerun analysis</button>' : "")}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step done"></i><i class="progress-step done"></i></div>
     ${
       report
@@ -889,7 +890,7 @@ function decisionSummaryText(report) {
   const findings = Object.values(report.findingsBySeverity || {}).flat();
   const counts = SEVERITY_ORDER.map((severity) => [severity, findings.filter((f) => f.severity === severity).length]).filter(([, n]) => n > 0);
   return [
-    `Agent Contract Gap review: ${state.project?.name || "review"}`,
+    `Contract & Insurance Gap review: ${state.project?.name || "review"}`,
     `Agent: ${report.agentSummary.name}`,
     `Attention score: ${report.overallAttentionScore ?? "n/a"}/100`,
     `Findings: ${counts.map(([severity, n]) => `${n} ${severity}`).join(", ") || "none"}`,
@@ -902,7 +903,7 @@ function signoffCard(report) {
   const findings = Object.values(report.findingsBySeverity || {}).flat();
   const worst = SEVERITY_ORDER.find((severity) => findings.some((f) => f.severity === severity));
   const needsDecision = findings.filter((f) => ["critical", "high", "moderate"].includes(f.severity)).length;
-  return `<div class="card f3-signoff" style="margin-top:18px"><span class="badge badge-gray">Coming soon</span><h2>Sign the decision in Trust Proof</h2><p>${needsDecision ? `${needsDecision} finding${needsDecision === 1 ? "" : "s"} at moderate severity or above${worst ? ` (highest: ${pretty(worst)})` : ""} need a named owner's call: accept the risk, require an insurance update, or restrict the agent's authority.` : "No moderate-or-higher findings need a decision right now."}</p><p class="small muted">Trust Proof will record who made that call and when, in a way anyone can verify independently. It does not have a sign-off screen yet, so nothing is submitted from here. Until then, keep your decision in your own records.</p><button class="button button-secondary" data-copy-decision>Copy decision summary</button></div>`;
+  return `<div class="card f3-signoff" style="margin-top:18px"><span class="badge badge-gray">Coming soon</span><h2>Sign the decision (Named Sign-off)</h2><p>${needsDecision ? `${needsDecision} finding${needsDecision === 1 ? "" : "s"} at moderate severity or above${worst ? ` (highest: ${pretty(worst)})` : ""} need a named owner's call: accept the risk, require an insurance update, or restrict the agent's authority.` : "No moderate-or-higher findings need a decision right now."}</p><p class="small muted">Named Sign-off will record who made that call and when, in a way anyone can verify independently. It does not have a sign-off screen yet, so nothing is submitted from here. Until then, keep your decision in your own records.</p><button class="button button-secondary" data-copy-decision>Copy decision summary</button></div>`;
 }
 
 function reportView(report) {
@@ -924,7 +925,7 @@ function reportView(report) {
               .join("")}</ul>`
           : "<p>No insurance-specific questions generated.</p>"
       }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div>${signoffCard(report)}</aside></div>
-    <section id="assurance-pack" class="card authority-card" aria-label="Agent Assurance Pack"></section>
+    <section id="assurance-pack" class="card authority-card" aria-label="Assurance Pack"></section>
     <div class="disclaimer">${escapeHtml(report.disclaimer)}</div>`;
 }
 

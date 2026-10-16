@@ -1,4 +1,4 @@
-// Authority certificate check (agent profile page) and Agent Assurance Pack (analysis page).
+// Authority certificate check (agent profile page) and Assurance Pack (analysis page).
 // Loaded before app.js and only uses its globals (state, api, escapeHtml, pretty, toast,
 // renderAgent) when a panel is mounted, i.e. after both scripts have run.
 /* global state, api, escapeHtml, toast, renderAgent */
@@ -47,7 +47,7 @@ let pendingCertificateRecheck = null;
 function mountCertificatePanel(agent) {
   const host = document.querySelector("#authority-certificate");
   if (!host || !agent?.id) return;
-  host.innerHTML = `<div class="section-head"><div><h2>Authority certificate</h2><p>Paste this agent's signed authority certificate from Authority Atlas to compare it with the profile above. Checking changes nothing.</p></div></div>
+  host.innerHTML = `<div class="section-head"><div><h2>Authority certificate</h2><p>Paste this agent's signed authority certificate from Agent Certificates to compare it with the profile above. Checking changes nothing.</p></div></div>
     <form class="authority-form" data-cert-form>
       <div class="field"><label for="cert-text">Certificate</label><textarea id="cert-text" name="certificate" rows="4" required minlength="20" maxlength="8000" spellcheck="false" autocomplete="off" placeholder="Paste the certificate text"></textarea></div>
       <div class="form-actions"><button type="submit" class="button button-primary">Check against this agent</button></div>
@@ -71,7 +71,7 @@ async function checkCertificate(agent, form) {
   const certificate = form.elements.certificate.value.trim();
   result.innerHTML = "";
   submit.disabled = true;
-  submit.textContent = "Checking with Authority Atlas…";
+  submit.textContent = "Checking with Agent Certificates…";
   try {
     const data = await api(`/agents/${agent.id}/certificate-check`, {
       method: "POST",
@@ -153,7 +153,7 @@ async function adoptCertificate(agent, certificate, button) {
   }
 }
 
-// ---- Agent Assurance Pack panel --------------------------------------------------------------
+// ---- Assurance Pack panel --------------------------------------------------------------
 
 const SIGNATURE_WORDS = {
   valid: "Signature valid: made by this service's key.",
@@ -165,11 +165,11 @@ const SIGNATURE_WORDS = {
 function mountAssurancePanel(analysis) {
   const host = document.querySelector("#assurance-pack");
   if (!host || !analysis?.state?.startsWith("completed")) return;
-  host.innerHTML = `<div class="section-head"><div><h2>Agent Assurance Pack</h2><p>A fingerprinted summary of this analysis, the agent profile and the evidence reviewed, ready to hand to a broker, auditor or lawyer.</p></div></div>
+  host.innerHTML = `<div class="section-head"><div><h2>Assurance Pack</h2><p>A fingerprinted summary of this analysis, the agent profile and the evidence reviewed, ready to hand to a broker, auditor or lawyer.</p></div></div>
     <form class="authority-form" data-pack-form>
       <details class="assurance-optional"><summary>Include an authority certificate (optional)</summary>
         <div class="field"><label for="pack-cert">Certificate</label><textarea id="pack-cert" name="certificate" rows="3" maxlength="8000" spellcheck="false" autocomplete="off" placeholder="Paste the certificate text"></textarea></div>
-        <p class="small muted">It is verified with Authority Atlas first. The pack then records whether the profile covers it.</p>
+        <p class="small muted">It is verified with Agent Certificates first. The pack then records whether the profile covers it.</p>
       </details>
       <div class="form-actions"><button type="submit" class="button button-primary">Build assurance pack</button></div>
     </form>

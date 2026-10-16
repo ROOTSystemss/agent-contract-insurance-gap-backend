@@ -1,5 +1,5 @@
-// Minimal "Sign in with Authority Atlas" authorize page for the OAuth bridge to
-// AI Compliance Readiness. Deliberately standalone (not part of the main SPA in
+// Minimal "Sign in with RootSystems" authorize page for the OAuth bridge to
+// Standards Readiness. Deliberately standalone (not part of the main SPA in
 // app.js) — this page's only job is: prove who you are on Atlas, show one
 // explicit confirm step, then hand a one-time code back to the redirect_uri.
 const API = "/api/v1";
@@ -38,9 +38,9 @@ async function api(path, options = {}) {
 
 function invalidRequestView() {
   app.innerHTML = `<main class="auth-page"><section class="auth-panel"><div class="auth-card">
-    <span class="eyebrow">Authority Atlas</span>
+    <span class="eyebrow">RootSystems</span>
     <h2>Sign-in link is incomplete</h2>
-    <p class="intro">This link is missing required information and can't continue. Return to AI Compliance Readiness and choose "Continue with Authority Atlas" again.</p>
+    <p class="intro">This link is missing required information and can't continue. Return to Standards Readiness and choose "Sign in with RootSystems" again.</p>
   </div></section></main>`;
 }
 
@@ -51,16 +51,16 @@ function loginView() {
       <section class="auth-story">
         <div><div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div></div>
         <div class="story-copy">
-          <span class="eyebrow">Authority Atlas</span>
-          <h1>Sign in to continue to <em>AI Compliance Readiness</em>.</h1>
+          <span class="eyebrow">RootSystems</span>
+          <h1>Sign in to continue to <em>Standards Readiness</em>.</h1>
           <p>Your Atlas password stays on Atlas. Readiness only ever receives your name, email, and organization, and only after you confirm on the next screen.</p>
         </div>
       </section>
       <section class="auth-panel">
         <div class="auth-card">
           <span class="eyebrow">Secure workspace</span>
-          <h2>${register ? "Create your Atlas workspace" : "Sign in to Authority Atlas"}</h2>
-          <p class="intro">${register ? "Start a workspace, then continue to AI Compliance Readiness." : "Sign in to continue to AI Compliance Readiness."}</p>
+          <h2>${register ? "Create your RootSystems workspace" : "Sign in to RootSystems"}</h2>
+          <p class="intro">${register ? "Start a workspace, then continue to Standards Readiness." : "Sign in to continue to Standards Readiness."}</p>
           <div class="segmented" role="tablist" aria-label="Authentication mode">
             <button class="segment ${!register ? "active" : ""}" data-auth-mode="login" role="tab">Sign in</button>
             <button class="segment ${register ? "active" : ""}" data-auth-mode="register" role="tab">Create account</button>
@@ -120,10 +120,10 @@ async function confirmView() {
     <main class="auth-page">
       <section class="auth-panel" style="margin-inline:auto;">
         <div class="auth-card">
-          <span class="eyebrow">Authority Atlas</span>
-          <h2>Continue to AI Compliance Readiness?</h2>
+          <span class="eyebrow">RootSystems</span>
+          <h2>Continue to Standards Readiness?</h2>
           <p class="intro">Signed in as <strong>${escapeHtml(me.user.name)}</strong> (${escapeHtml(me.user.email)}) — workspace <strong>${escapeHtml(me.organization.name)}</strong>.</p>
-          <p class="small muted">AI Compliance Readiness will receive your name, email, and organization. Your Atlas password is never shared.</p>
+          <p class="small muted">Standards Readiness will receive your name, email, and organization. Your Atlas password is never shared.</p>
           <div class="field-grid">
             <div class="field full"><button id="continue-button" class="button button-primary button-block" type="button">Continue<span>→</span></button><p id="confirm-message" class="form-message"></p></div>
             <div class="field full"><button id="switch-account" class="button button-secondary button-block" type="button">Use a different account</button></div>

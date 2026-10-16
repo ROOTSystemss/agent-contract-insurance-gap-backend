@@ -13,7 +13,7 @@ import { auditRoutes } from "./api/audit-routes.js";
 import { createAtlasVerifier, type CertificateVerifier } from "./authority/certificate.js";
 import { GovernanceGateway, type GatewayOptions } from "./governance/gateway.js";
 import { SecretBox } from "./governance/secret-box.js";
-import { ConsoleBilling } from "./governance/billing.js";
+import { ConsoleBilling, PLANS } from "./governance/billing.js";
 import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
@@ -371,6 +371,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     meta: {},
     requestId: request.id,
   }));
+  // Public, read-only: the plans a workspace can buy (the same PLANS the checkout uses), so the sign-in
+  // screen and the main app can show prices before anyone signs up.
+  app.get("/api/v1/plans", async () => ({ data: { plans: Object.values(PLANS), upgradeWhere: "Console, Settings, Plan & billing" } }));
   app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
 
   await app.register(uiRoutes);

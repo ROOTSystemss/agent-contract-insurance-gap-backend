@@ -1,6 +1,6 @@
 /* RootSystems Agent Governance console.
-   One workspace login for the Floor 3 chain: certificates (Authority Atlas), the action ledger
-   (Trust Proof) and coverage analyses (Agent Contract Gap). Talks only to /api/v1 on this origin.
+   One workspace login for the Floor 3 chain: certificates (Agent Certificates), the action ledger
+   (Action Ledger) and coverage analyses (Contract & Insurance Gap). Talks only to /api/v1 on this origin.
    All text from the server is inserted with textContent, never as HTML. */
 (function () {
   "use strict";
@@ -101,6 +101,18 @@
   }
 
   // ---------- API ----------
+  // Public plan list for the sign-in screen: the same plans the checkout sells, with where to buy.
+  function loadPublicPlans(host) {
+    api("/plans").then(function (res) {
+      var plans = (res && res.plans) || [];
+      if (!plans.length) return;
+      host.appendChild(h("h2", { class: "auth__plans-title", text: "Plans" }));
+      host.appendChild(h("ul", { class: "auth__plans-list" }, plans.map(function (p) {
+        return h("li", { "data-plan": p.id }, h("strong", { text: p.name + " " }), h("span", { text: p.priceUsdMonthly ? "$" + p.priceUsdMonthly.toLocaleString("en-US") + "/month" : "free" }), h("small", { text: " · up to " + p.activeCertificates + " active agents" }));
+      })));
+      host.appendChild(h("p", { class: "auth__plans-note", text: "Start on the free trial; upgrade any time in Settings → Plan & billing (payments by Dodo Payments). Questions: hello@rootsystems.app" }));
+    }).catch(function () { /* the sign-in form works without the plan list */ });
+  }
   function api(path, options) {
     options = options || {};
     var headers = { Accept: "application/json" };
@@ -180,6 +192,9 @@
           field("Password", h("input", { class: "input", type: "password", name: "password", autocomplete: "new-password", required: true, minlength: "12" }), "At least 12 characters."),
         ];
     clear(app);
+    // Plans and prices, before anyone signs up (public /api/v1/plans; checkout is in Settings, Plan & billing).
+    var plansHost = h("div", { class: "auth__plans", id: "auth-plans" });
+    loadPublicPlans(plansHost);
     app.appendChild(h("div", { class: "auth" },
       h("section", { class: "auth__story" },
         h("div", { class: "auth__brand" }, h("img", { src: "/rs-logo.svg", alt: "" }), "RootSystems"),
@@ -189,7 +204,7 @@
           h("ul", { class: "auth__points" },
             h("li", null, icon("shield"), h("span", null, h("strong", { text: "Post-quantum signed. " }), "Certificates and ledger checkpoints carry ML-DSA-65 signatures (NIST FIPS 204).")),
             h("li", null, icon("bolt"), h("span", null, h("strong", { text: "Enforced live. " }), "Over-limit, out-of-scope or revoked actions are blocked and recorded.")),
-            h("li", null, icon("ledger"), h("span", null, h("strong", { text: "Tamper-evident. " }), "Every action joins a hash chain nobody can quietly edit.")))),
+            h("li", null, icon("ledger"), h("span", null, h("strong", { text: "Tamper-evident. " }), "Every action joins a hash chain nobody can quietly edit."))), plansHost),
         h("p", { class: "auth__foot", text: "Decision support and evidence, not legal or insurance advice." })),
       h("section", { class: "auth__form" },
         h("div", { class: "auth__card" },
@@ -287,13 +302,13 @@
 
   // ---------- views ----------
   function viewNotConfigured(content) {
-    content.appendChild(h("div", { class: "panel" }, h("div", { class: "empty" }, icon("alert"), h("h4", { text: "Agent Governance is not switched on for this server" }), h("p", { text: "The console needs its Authority Atlas and Trust Proof services. Contact RootSystems to enable it." }))));
+    content.appendChild(h("div", { class: "panel" }, h("div", { class: "empty" }, icon("alert"), h("h4", { text: "Agent Governance is not switched on for this server" }), h("p", { text: "The console needs its Agent Certificates and Action Ledger services. Contact RootSystems to enable it." }))));
   }
 
   function viewActivate(content) {
     var steps = [
-      { title: "Authority Atlas", text: "A private identity that signs your agents' certificates." },
-      { title: "Trust Proof", text: "A private ledger that checks and records every agent action." },
+      { title: "Agent Certificates", text: "A private identity that signs your agents' certificates." },
+      { title: "Action Ledger", text: "A private ledger that checks and records every agent action." },
       { title: "Sealed credentials", text: "Keys encrypted with AES-256 — you never handle them." },
     ];
     var stepEls = steps.map(function (s) { return h("div", { class: "step" }, h("b", null, icon("check"), s.title), h("p", { text: s.text })); });
@@ -315,7 +330,7 @@
     content.appendChild(h("div", { class: "panel activate" },
       h("div", { class: "pill pill--pq", text: "Branch 3 · AI Agent Trust" }),
       h("h2", { style: "margin-top:16px" }, "Give every agent a signed scope of authority."),
-      h("p", { text: "Activation creates this workspace's private links to Authority Atlas and Trust Proof. It takes a few seconds (up to a minute if a service is waking up) and only happens once." }),
+      h("p", { text: "Activation creates this workspace's private links to Agent Certificates and Action Ledger. It takes a few seconds (up to a minute if a service is waking up) and only happens once." }),
       h("div", { class: "steps" }, stepEls),
       btn));
   }
@@ -334,7 +349,7 @@
     content.appendChild(kpis);
     content.appendChild(h("div", { class: "grid grid--2", style: "margin-top:18px" },
       h("div", { class: "panel" },
-        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Live activity" }), h("p", { text: "The latest actions your agents reported, as Trust Proof judged them." })), h("div", { class: "actions" }, h("a", { class: "btn btn--sm", href: "#/ledger" }, "Open ledger", icon("arrow")))),
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Live activity" }), h("p", { text: "The latest actions your agents reported, as Action Ledger judged them." })), h("div", { class: "actions" }, h("a", { class: "btn btn--sm", href: "#/ledger" }, "Open ledger", icon("arrow")))),
         feed),
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Chain integrity" }), h("p", { text: "Recompute the whole ledger and get a signed checkpoint." }))),
@@ -530,7 +545,7 @@
     function row(ok, label, detail) {
       return h("li", { class: ok === null ? "wait" : ok ? "ok" : "bad" }, icon(ok === null ? "loader" : ok ? "check" : "x", ok === null ? "spin" : null), h("span", { text: label }), detail ? h("small", { text: detail }) : null);
     }
-    append(checks, [row(null, "Checking signature with Authority Atlas…")]);
+    append(checks, [row(null, "Checking signature with Agent Certificates…")]);
     var foot = [];
     if (c.status === "active") foot.push(h("button", { class: "btn btn--danger", onclick: function () { d.close(); confirmRevoke(c, after); } }, icon("ban"), "Revoke"));
     foot.push(h("button", { class: "btn", onclick: function () { d.close(); } , text: "Close" }));
@@ -546,12 +561,12 @@
       append(checks, [
         row(v.valid === true || v.reason === "revoked", "ES256 signature and SHA-512 registry binding", a.registryBinding || v.reason),
         row(a.pqSignature === "valid", "ML-DSA-65 post-quantum countersignature", a.pqSignature || "not supplied"),
-        row(v.valid === true, v.valid ? "Currently valid in Authority Atlas" : "Not currently valid", v.reason || "valid"),
+        row(v.valid === true, v.valid ? "Currently valid in Agent Certificates" : "Not currently valid", v.reason || "valid"),
       ]);
       append(tokenBox, [h("div", { class: "nav__label", style: "margin:0 0 10px", text: "For your agent runtime" }),
         h("div", { class: "secret" }, h("input", { class: "input mono", readonly: true, value: r.certificate, "aria-label": "Certificate token" }),
           h("button", { class: "btn", onclick: function () { copy(r.certificate, "Certificate"); } }, icon("copy"), "Copy")),
-        h("p", { class: "faint", style: "font-size:12px;margin:8px 0 0", text: "Your agent sends this certificate with every action it reports to Trust Proof (see Settings → Connect your agent)." })]);
+        h("p", { class: "faint", style: "font-size:12px;margin:8px 0 0", text: "Your agent sends this certificate with every action it reports to Action Ledger (see Settings → Connect your agent)." })]);
     }).catch(function (err) {
       clear(checks);
       append(checks, [row(false, err.status === 404 ? "Issued outside this console: no stored copy to verify" : err.message)]);
@@ -749,7 +764,7 @@
         }).catch(function (err) { go.disabled = false; toast(err.message, true); });
       });
       setupHost.appendChild(h("div", { class: "panel", style: "margin-bottom:18px" },
-        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Set up your signing key" }), h("p", { text: "Creates your personal key pair (ECDSA + ML-DSA-65) in Trust Proof, locked with a passphrase only you know. RootSystems never stores it: if you forget it, a new key must be issued." }))),
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Set up your signing key" }), h("p", { text: "Creates your personal key pair (ECDSA + ML-DSA-65) for Named Sign-off, locked with a passphrase only you know. RootSystems never stores it: if you forget it, a new key must be issued." }))),
         h("div", { class: "panel__body" }, h("div", { class: "form-grid" }, h("div", { class: "two" }, field("Signing passphrase", p1), field("Repeat it", p2)), h("div", null, go)))));
     }
     function load() {
@@ -867,7 +882,7 @@
       clear(host);
       if (!c.projects.length) {
         host.appendChild(h("div", { class: "panel activate" },
-          h("div", { class: "pill pill--pq", text: "Agent Contract Gap" }),
+          h("div", { class: "pill pill--pq", text: "Contract & Insurance Gap" }),
           h("h2", { style: "margin-top:16px" }, "Does your insurance cover what your agents can do?"),
           h("p", { text: "Compare each agent's authority with your contracts and insurance, including the AI exclusions insurers added in 2026, and produce a signed Assurance Pack for your broker. Start your first project in the coverage workspace (same sign-in)." }),
           h("a", { class: "btn btn--primary btn--lg", href: "/" }, "Start a coverage analysis", icon("arrow"))));
@@ -902,7 +917,7 @@
   }
 
   function viewSettings(content) {
-    var keyInput = h("input", { class: "input mono", readonly: true, value: "••••••••••••••••••••••••••••••", "aria-label": "Trust Proof API key" });
+    var keyInput = h("input", { class: "input mono", readonly: true, value: "••••••••••••••••••••••••••••••", "aria-label": "Action Ledger API key" });
     var tpUrl = (state.status && state.status.trustProofUrl) || "";
     var urlText = h("span", { class: "mono", text: tpUrl || "not configured" });
     var revealed = null;
@@ -911,7 +926,7 @@
     var code = h("pre", { class: "codeblock" });
     function paintCode(url) {
       clear(code);
-      append(code, [h("span", { class: "c", text: "// Before your agent acts, ask Trust Proof. Blocked actions are recorded too.\n" }),
+      append(code, [h("span", { class: "c", text: "// Before your agent acts, ask Action Ledger. Blocked actions are recorded too.\n" }),
         "const res = await fetch(", h("span", { class: "s", text: '"' + url + '/api/v1/agent-actions"' }), ", {\n",
         "  method: ", h("span", { class: "s", text: '"POST"' }), ",\n",
         "  headers: { Authorization: ", h("span", { class: "s", text: '"Bearer " + process.env.TRUST_PROOF_KEY' }), ", ", h("span", { class: "s", text: '"Content-Type"' }), ": ", h("span", { class: "s", text: '"application/json"' }), " },\n",
@@ -946,22 +961,22 @@
         billingHost),
       teamPanel,
       h("div", { class: "panel" },
-        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Connect your agent" }), h("p", { text: "Your runtime reports each action with this workspace's Trust Proof key and the agent's certificate." }))),
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Connect your agent" }), h("p", { text: "Your runtime reports each action with this workspace's Action Ledger key and the agent's certificate." }))),
         h("div", { class: "panel__body", style: "display:grid;gap:16px" },
-          h("div", { class: "field" }, h("label", { text: "Trust Proof endpoint" }), h("div", { class: "muted" }, urlText)),
+          h("div", { class: "field" }, h("label", { text: "Action Ledger endpoint" }), h("div", { class: "muted" }, urlText)),
           h("div", { class: "field" }, h("label", { text: "Workspace API key" }),
             isAdmin ? h("div", { class: "secret" }, keyInput, reveal, copyBtn) : h("p", { class: "muted", text: "Only workspace owners and admins can view the key." }),
             h("small", { text: "Keep it in your runtime's secret store. Viewing it is recorded in the audit log." })),
           code)),
       h("div", { class: "panel" },
-        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Alerts" }), h("p", { text: "Trust Proof calls your HTTPS address whenever an agent tries something outside its authority." }))),
+        h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Alerts" }), h("p", { text: "Action Ledger calls your HTTPS address whenever an agent tries something outside its authority." }))),
         alertsHost),
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Signing & evidence" }), h("p", { text: "How the evidence from this workspace can be checked." }))),
         h("div", { class: "panel__body" }, h("ul", { class: "verify-list" },
-          h("li", { class: "ok" }, icon("check"), h("span", { text: "Certificates signed with ES256 and countersigned with ML-DSA-65" }), h("small", { text: "Authority Atlas" })),
+          h("li", { class: "ok" }, icon("check"), h("span", { text: "Certificates signed with ES256 and countersigned with ML-DSA-65" }), h("small", { text: "Agent Certificates" })),
           h("li", { class: "ok" }, icon("check"), h("span", { text: "Each certificate bound by SHA-512 in the Atlas registry" }), h("small", { text: "rejects re-signed forgeries" })),
-          h("li", { class: "ok" }, icon("check"), h("span", { text: "Ledger checkpoints signed with ML-DSA-65" }), h("small", { text: "Trust Proof" })),
+          h("li", { class: "ok" }, icon("check"), h("span", { text: "Ledger checkpoints signed with ML-DSA-65" }), h("small", { text: "Action Ledger" })),
           h("li", { class: "ok" }, icon("check"), h("span", { text: "Linked-service credentials sealed with AES-256-GCM" }), h("small", { text: "never shown to anyone" }))))),
       h("div", { class: "panel" },
         h("div", { class: "panel__head" }, h("div", null, h("h3", { text: "Workspace" }), h("p", { text: (state.me && state.me.organization && state.me.organization.name) || "" }))),
@@ -1007,7 +1022,7 @@
     document.body.appendChild(scrim); document.body.appendChild(modal);
   }
 
-  var MAX_ALERTS = 5; // Trust Proof's per-organization webhook limit
+  var MAX_ALERTS = 5; // Action Ledger's per-organization webhook limit
   function loadAlerts(host, isAdmin, canTest) {
     api("/console/alerts").then(function (hooks) {
       clear(host);
