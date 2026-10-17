@@ -18,7 +18,7 @@ async function request(path, options = {}) {
 
 const product = await fetch(`${baseUrl}/`);
 assert.equal(product.status, 200);
-assert.match(await product.text(), /Authority Atlas/);
+assert.match(await product.text(), /AI Agent Trust/);
 
 const suffix = Date.now();
 const registration = await request("/api/v1/auth/register", {
