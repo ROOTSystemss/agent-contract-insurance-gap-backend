@@ -133,7 +133,7 @@ function flowStrip(current) {
   return `<nav class="f3-flow" aria-label="AI Agent Trust journey"><span class="f3-flow__label">AI Agent Trust journey</span><ol>${steps
     .map(([name, note, number], index) => {
       const status = stateFor(index);
-      const soon = index === 2 ? '<em class="f3-flow__soon">Coming soon</em>' : "";
+      const soon = "";
       return `<li class="f3-flow__step f3-flow__step--${status}"${status === "current" ? ' aria-current="step"' : ""}><span class="f3-flow__num">${status === "done" ? "✓" : number}</span><span class="f3-flow__copy"><strong>${name}</strong><small>${note}</small></span>${soon}</li>`;
     })
     .join("")}</ol></nav>`;
@@ -863,6 +863,18 @@ function renderAnalysis() {
       toast("Copy is not available in this browser.", "error");
     }
   });
+  // Named Sign-off: hand the decision to the console's Approvals, where named owners sign it with
+  // their own keys. The draft travels in this tab's sessionStorage (same sign-in, same origin).
+  document.querySelector("[data-request-signoff]")?.addEventListener("click", () => {
+    const report = state.report;
+    const analysisId = (report && report.analysisId) || (state.analyses && state.analyses[0] && state.analyses[0].id) || "";
+    sessionStorage.setItem("rsSignoffDraft", JSON.stringify({
+      title: `Decide on ${report.agentSummary.name}: contract and insurance gaps`.slice(0, 200),
+      details: decisionSummaryText(report),
+      reference: analysisId ? `Contract & Insurance Gap analysis ${analysisId}`.slice(0, 200) : "",
+    }));
+    window.location.href = "/console#/approvals";
+  });
   document.querySelector("[data-download-report]")?.addEventListener("click", downloadReport);
   document.querySelector("[data-download-pdf]")?.addEventListener("click", downloadPdfReport);
   document.querySelectorAll("[data-finding-status]").forEach((select) =>
@@ -903,7 +915,7 @@ function signoffCard(report) {
   const findings = Object.values(report.findingsBySeverity || {}).flat();
   const worst = SEVERITY_ORDER.find((severity) => findings.some((f) => f.severity === severity));
   const needsDecision = findings.filter((f) => ["critical", "high", "moderate"].includes(f.severity)).length;
-  return `<div class="card f3-signoff" style="margin-top:18px"><span class="badge badge-gray">Coming soon</span><h2>Sign the decision (Named Sign-off)</h2><p>${needsDecision ? `${needsDecision} finding${needsDecision === 1 ? "" : "s"} at moderate severity or above${worst ? ` (highest: ${pretty(worst)})` : ""} need a named owner's call: accept the risk, require an insurance update, or restrict the agent's authority.` : "No moderate-or-higher findings need a decision right now."}</p><p class="small muted">Named Sign-off will record who made that call and when, in a way anyone can verify independently. It does not have a sign-off screen yet, so nothing is submitted from here. Until then, keep your decision in your own records.</p><button class="button button-secondary" data-copy-decision>Copy decision summary</button></div>`;
+  return `<div class="card f3-signoff" id="named-signoff" style="margin-top:18px"><span class="badge badge-green">Named Sign-off</span><h2>Sign the decision</h2><p>${needsDecision ? `${needsDecision} finding${needsDecision === 1 ? "" : "s"} at moderate severity or above${worst ? ` (highest: ${pretty(worst)})` : ""} need a named owner's call: accept the risk, require an insurance update, or restrict the agent's authority.` : "No moderate-or-higher findings need a decision right now."}</p><p class="small muted">Ask the owners who decide: each one signs with their own key in Approvals, and the signed decision records who made the call and when, in a way anyone can verify independently. You cannot sign your own request.</p><div class="form-actions"><button class="button button-primary" data-request-signoff>Ask a named owner to sign →</button><button class="button button-secondary" data-copy-decision>Copy decision summary</button></div></div>`;
 }
 
 function reportView(report) {

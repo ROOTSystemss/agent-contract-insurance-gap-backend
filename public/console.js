@@ -793,7 +793,16 @@
     }
     function load() {
       clear(body).appendChild(h("tr", null, h("td", { colspan: "4" }, h("div", { class: "skeleton" }))));
-      api("/console/approvals").then(function (r) { data = r; paintSetup(); paint(); }).catch(function (err) { clear(body); toast(err.message, true); });
+      api("/console/approvals").then(function (r) {
+        data = r; paintSetup(); paint();
+        // Arrived from "Ask a named owner to sign" on a Contract & Insurance Gap analysis: open the
+        // request with the decision filled in, once.
+        var draft = sessionStorage.getItem("rsSignoffDraft");
+        if (draft) {
+          sessionStorage.removeItem("rsSignoffDraft");
+          try { openRequestDrawer(data, load, JSON.parse(draft)); } catch { /* malformed draft: ignore */ }
+        }
+      }).catch(function (err) { clear(body); toast(err.message, true); });
     }
     load();
   }
@@ -868,10 +877,12 @@
     }).catch(function (err) { clear(host); toast(err.message, true); });
   }
 
-  function openRequestDrawer(data, after) {
+  function openRequestDrawer(data, after, prefill) {
     var title = h("input", { class: "input", maxlength: "200", placeholder: "Raise Payments Bot limit to $1,000" });
     var details = h("textarea", { class: "input", rows: "6", maxlength: "20000", style: "height:auto;padding:12px;line-height:1.5", placeholder: "What exactly is being approved, and why." });
     var reference = h("input", { class: "input mono", maxlength: "200", placeholder: "Optional: certificate id, ticket, Assurance Pack hash" });
+    // From a Contract & Insurance Gap analysis ("Ask a named owner to sign"): the decision is filled in.
+    if (prefill) { title.value = prefill.title || ""; details.value = prefill.details || ""; reference.value = prefill.reference || ""; }
     var picks = {};
     var others = data.team.filter(function (t) { return !data.me || t.userId !== data.me.userId; });
     var list = h("ul", { class: "verify-list" }, others.length ? others.map(function (t) {
