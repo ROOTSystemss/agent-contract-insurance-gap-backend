@@ -426,3 +426,4 @@ table.data tbody tr.clickable:hover { background: rgba(243, 234, 217, 0.03); }
 .auth__plans-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
 .auth__plans-list small { opacity: .75; }
 .auth__plans-note { font-size: 12.5px; opacity: .8; margin: 8px 0 0; }
+.auth__paid { font-size: 13.5px; padding: 10px 12px; border-left: 3px solid currentColor; background: rgba(127, 127, 127, .08); border-radius: 6px; }

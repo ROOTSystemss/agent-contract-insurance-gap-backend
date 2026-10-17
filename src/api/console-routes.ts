@@ -327,6 +327,17 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
+  // A plan bought on the website before signing up (the console passes Dodo's subscription id from
+  // its return link).
+  app.post("/billing/claim", async (request) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { subscriptionId } = z.object({ subscriptionId: z.string().min(4).max(100) }).parse(request.body);
+    const plan = await app.billing.claim(organization, subscriptionId);
+    await audit(app.store, request, "organization", organization.id, "console.website_purchase_claimed", { plan: plan.id });
+    return success(request, { plan });
+  });
+
   app.post("/billing/checkout", async (request) => {
     requireRole(request, "admin");
     const organization = await workspace(request);

@@ -9,6 +9,28 @@
   var state = { token: sessionStorage.getItem(TOKEN_KEY), me: null, status: null, route: "overview", cache: {} };
   var app = document.getElementById("app");
 
+  // Bought on the website before signing up: Dodo returns here with ?subscription_id=... It is kept in
+  // this tab and claimed for the workspace as soon as the buyer is signed in (claimWebsitePurchase).
+  var PENDING_KEY = "rsPendingSubscription";
+  (function rememberWebsitePurchase() {
+    var sub = new URLSearchParams(location.search).get("subscription_id");
+    if (sub && /^[A-Za-z0-9_-]{4,100}$/.test(sub)) {
+      sessionStorage.setItem(PENDING_KEY, sub);
+      window.history.replaceState(null, "", location.pathname + location.hash);
+    }
+  })();
+  function claimWebsitePurchase() {
+    var sub = sessionStorage.getItem(PENDING_KEY);
+    if (!sub) return;
+    sessionStorage.removeItem(PENDING_KEY);
+    api("/console/billing/claim", { method: "POST", body: { subscriptionId: sub } }).then(function (res) {
+      toast("Your website purchase is now on this workspace: " + res.plan.name + " plan.");
+      location.hash = "#/settings";
+    }, function (err) {
+      toast("Your purchase could not be added: " + err.message, true);
+    });
+  }
+
   // ---------- tiny DOM helpers ----------
   function h(tag, props) {
     var el = document.createElement(tag);
@@ -210,6 +232,7 @@
         h("div", { class: "auth__card" },
           h("h2", { text: mode === "signin" ? "Welcome back" : "Create your workspace" }),
           h("p", { text: mode === "signin" ? "Sign in to your Agent Governance console." : "One workspace for certificates, the action ledger and coverage." }),
+          sessionStorage.getItem(PENDING_KEY) ? h("p", { class: "auth__paid", id: "paid-pending", text: "Payment received. Sign in or create your workspace and your plan is added to it right away." }) : null,
           h("form", { onsubmit: submit },
             fields,
             errorBox,
@@ -276,6 +299,7 @@
       state.me = res[0];
       state.status = res[1];
       render();
+      claimWebsitePurchase();
     }).catch(function (err) {
       if (err.status === 401) return;
       clear(app).appendChild(h("div", { class: "empty", style: "min-height:100vh" }, icon("alert"), h("h4", { text: "The console could not load" }), h("p", { text: err.message }), h("button", { class: "btn", onclick: boot }, icon("refresh"), "Try again")));

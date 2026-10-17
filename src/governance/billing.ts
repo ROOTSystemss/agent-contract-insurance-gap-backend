@@ -89,6 +89,54 @@ export class ConsoleBilling {
     return session.checkout_url;
   }
 
+  // Checkout straight from the website's price buttons, before any account exists: Dodo asks for the
+  // buyer's email itself and returns them to /console?subscription_id=..., where the console claims it
+  // for their workspace once they sign in (claim below).
+  async guestCheckout(planId: "team" | "business", cancelUrl: string): Promise<string> {
+    let session;
+    try {
+      session = await this.dodo().checkoutSessions.create({
+        product_cart: [{ product_id: this.options.productIds[planId]!, quantity: 1 }],
+        metadata: { product: "agent-governance", source: "website" },
+        return_url: `${new URL(this.options.returnUrl).origin}/console`,
+        cancel_url: cancelUrl,
+      });
+    } catch {
+      throw new AppError(502, "CHECKOUT_UNAVAILABLE", "Checkout could not be started. Please try again in a moment.");
+    }
+    if (!session.checkout_url) throw new AppError(502, "CHECKOUT_UNAVAILABLE", "Checkout could not be started.");
+    return session.checkout_url;
+  }
+
+  // Attaches a subscription bought on the website to this workspace. The id comes from Dodo's return
+  // link in the buyer's own browser, so only whoever completed that checkout can claim it. The
+  // workspace is written into the subscription's metadata, so every later webhook (renewal,
+  // cancellation) finds it like any other checkout.
+  async claim(organization: Organization, subscriptionId: string): Promise<Plan> {
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(subscriptionId)) throw new AppError(400, "INVALID_SUBSCRIPTION", "That is not a Dodo subscription id.");
+    let data;
+    try {
+      data = await this.dodo().subscriptions.retrieve(subscriptionId);
+    } catch {
+      throw new AppError(404, "SUBSCRIPTION_NOT_FOUND", "That purchase could not be found.");
+    }
+    const plan = this.planForProduct(data.product_id);
+    if (!plan) throw new AppError(400, "NOT_A_CONSOLE_PLAN", "That purchase is not an AI Agent Trust plan.");
+    const owner = (data.metadata as Record<string, unknown> | undefined)?.organizationId;
+    if (owner && owner !== organization.id) throw new AppError(409, "ALREADY_CLAIMED", "That purchase is already on another workspace.");
+    await this.dodo().subscriptions.update(subscriptionId, { metadata: { ...(data.metadata ?? {}), organizationId: organization.id, product: "agent-governance" } });
+    await this.store.saveConsoleSubscription({
+      organizationId: organization.id,
+      plan,
+      status: data.status ?? "pending",
+      dodoCustomerId: data.customer?.customer_id ?? null,
+      dodoSubscriptionId: data.subscription_id ?? subscriptionId,
+      renewsAt: data.next_billing_date ?? null,
+      lastEventAt: new Date().toISOString(),
+    });
+    return PLANS[plan];
+  }
+
   // Verifies the signature (Standard Webhooks, via the SDK), ignores redeliveries, and records the
   // subscription's plan and status for the workspace named in its metadata.
   async handleWebhook(rawBody: string, headers: Record<string, string>): Promise<{ handled: boolean; reason?: string }> {

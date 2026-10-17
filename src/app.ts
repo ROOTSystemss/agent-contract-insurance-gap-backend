@@ -374,6 +374,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // Public, read-only: the plans a workspace can buy (the same PLANS the checkout uses), so the sign-in
   // screen and the main app can show prices before anyone signs up.
   app.get("/api/v1/plans", async () => ({ data: { plans: Object.values(PLANS), upgradeWhere: "Console, Settings, Plan & billing" } }));
+  // The website's price buttons: straight to Dodo checkout, no account needed.
+  app.get("/buy/:plan", async (request, reply) => {
+    const { plan } = request.params as { plan: string };
+    if (plan !== "team" && plan !== "business") return reply.redirect("/console");
+    try {
+      return reply.redirect(await app.billing.guestCheckout(plan, "https://rootsystems.app/pricing#agent-governance"));
+    } catch {
+      return reply.redirect("/console");
+    }
+  });
   app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
 
   await app.register(uiRoutes);
