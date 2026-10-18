@@ -17,6 +17,7 @@ import { ConsoleBilling, PLANS } from "./governance/billing.js";
 import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
+import { keyHistory } from "./crypto/key-history.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
 import { authRoutes } from "./api/auth-routes.js";
@@ -333,6 +334,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     "/.well-known/rootsystems-signing-key.json",
     { schema: { tags: ["system"], summary: "Public ML-DSA-65 key that signs Assurance Packs" } },
     async () => publicKeyInfo(app.pqSigner),
+  );
+  // Every signing key this product has used (crypto/key-history.ts), as the other RootSystems products publish.
+  app.get(
+    "/.well-known/rootsystems-signing-keys.json",
+    { schema: { tags: ["system"], summary: "Signing key history (rootsystems.keyring/v1)" } },
+    async (request, reply) => {
+      const history = keyHistory("ai-agent-trust", app.pqSigner, process.env.PQ_KEY_HISTORY_JSON);
+      if (!history) return reply.code(404).send({ error: { code: "NOT_CONFIGURED", message: "No signing key is configured." }, requestId: request.id });
+      return history;
+    },
   );
   app.get(
     "/ready",
