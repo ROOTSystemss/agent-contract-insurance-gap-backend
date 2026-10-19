@@ -6,6 +6,7 @@ import { buildAssurancePack, verifyAssurancePack } from "../reports/assurance-pa
 import { reconcile, requireVerifiedCertificate } from "../authority/certificate.js";
 import type { DocumentRecord, Finding } from "../domain/types.js";
 import { generateReportPdf } from "../reports/pdf-report.js";
+import { recordReceipt } from "../evidence/receipts.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { actor, audit, paginatedMeta, pagination, requireRole, success } from "./helpers.js";
 import { analysisCreateSchema } from "./schemas.js";
@@ -138,7 +139,12 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
       contentHash: built.contentHash,
       withCertificate: reconciliation !== null,
     });
-    return success(request, built);
+    // Evidence Notary: the pack's fingerprint, signed and chained, then anchored in Bitcoin.
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId, type: "assurance-pack", subject: { kind: "analysis", id },
+      facts: { contentHash: built.contentHash, contentHashSha512: built.contentHashSha512, projectId: analysis.projectId, withCertificate: reconciliation !== null, packSigned: built.signature.status === "signed" },
+    }, request.log);
+    return success(request, { ...built, receipt: receipt ? receipt.receipt : null });
   });
 
   // Recomputes a pack's fingerprint. Proves the pack is unchanged since it was built.

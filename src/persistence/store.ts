@@ -17,6 +17,7 @@ import type {
   ConsoleCertificate,
   ConsoleSubscription,
   ConsoleSigner,
+  EvidenceReceiptRecord,
   User,
 } from "../domain/types.js";
 
@@ -131,6 +132,16 @@ export interface Store {
   claimBillingWebhookEvent(id: string, type: string): Promise<boolean>;
   listConsoleSigners(organizationId: string): Promise<ConsoleSigner[]>;
   addConsoleSigner(record: Omit<ConsoleSigner, "createdAt">): Promise<ConsoleSigner>;
+  // Evidence Notary receipts, chained per workspace. addReceipt refuses a second receipt with the same
+  // (organizationId, seq) by throwing an error whose code is "SEQ_TAKEN", so two receipts issued at the
+  // same moment retry instead of forking the chain.
+  lastReceipt(organizationId: string): Promise<EvidenceReceiptRecord | null>;
+  addReceipt(record: Omit<EvidenceReceiptRecord, "createdAt" | "otsConfirmedAt" | "otsBlockHeight">): Promise<EvidenceReceiptRecord>;
+  listReceipts(organizationId: string): Promise<EvidenceReceiptRecord[]>;
+  getReceipt(organizationId: string, seq: number): Promise<EvidenceReceiptRecord | null>;
+  // Receipts whose Bitcoin timestamp is not confirmed yet, oldest first, across all workspaces.
+  listUnanchoredReceipts(limit: number): Promise<EvidenceReceiptRecord[]>;
+  updateReceiptTimestamp(organizationId: string, seq: number, patch: Partial<Pick<EvidenceReceiptRecord, "otsProof" | "otsStatus" | "otsConfirmedAt" | "otsBlockHeight">>): Promise<void>;
   // Adds a new user to an existing workspace (team invite). Throws EMAIL_EXISTS if the email is taken.
   addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember>;
   reset(): Promise<void>;

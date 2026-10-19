@@ -27,6 +27,8 @@ import { jurisdictionRoutes } from "./api/jurisdiction-routes.js";
 import { organizationRoutes } from "./api/organization-routes.js";
 import { projectRoutes } from "./api/project-routes.js";
 import { uiRoutes } from "./api/ui-routes.js";
+import { publicVerifyRoutes } from "./api/public-verify-routes.js";
+import { startReceiptTimestampSweep } from "./evidence/timestamps.js";
 import { governanceRoutes } from "./api/governance-routes.js";
 import { oauthRoutes } from "./api/oauth-routes.js";
 import { loadConfig, type AppConfig } from "./config/env.js";
@@ -254,9 +256,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         );
     }, config.RETENTION_SWEEP_INTERVAL_MS);
     retentionTimer.unref();
+    // Hourly OpenTimestamps sweep of Evidence Notary receipts (not in tests: no network there).
+    if (config.NODE_ENV !== "test") stopReceiptSweep = startReceiptTimestampSweep(store, app.log);
   });
+  let stopReceiptSweep: (() => void) | undefined;
 
   app.addHook("onClose", async () => {
+    stopReceiptSweep?.();
     if (retentionTimer) clearInterval(retentionTimer);
     oauthCodes.stop();
     if (store instanceof PrismaStore) await store.disconnect();
@@ -397,6 +403,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
 
+  await app.register(publicVerifyRoutes); // GET /verify and POST /api/v1/public/verify: no account needed
   await app.register(uiRoutes);
   await app.register(governanceRoutes, { prefix: "/api/v1/governance" });
   await app.register(oauthRoutes, { prefix: "/api/v1/oauth", config });

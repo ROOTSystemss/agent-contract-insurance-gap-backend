@@ -18,6 +18,7 @@ import type {
   ConsoleCertificate,
   ConsoleSubscription,
   ConsoleSigner,
+  EvidenceReceiptRecord,
   Role,
   TextSegment,
 } from "../domain/types.js";
@@ -26,6 +27,17 @@ import { EmailVault, normalizeEmail } from "./email-vault.js";
 import { SEALED_PREFIX } from "./field-vault.js";
 
 const iso = (date: Date): string => date.toISOString();
+const receiptRow = (row: { organizationId: string; seq: number; receipt: Prisma.JsonValue; anchorHash: string; otsProof: string | null; otsStatus: string; otsConfirmedAt: Date | null; otsBlockHeight: number | null; createdAt: Date }): EvidenceReceiptRecord => ({
+  organizationId: row.organizationId,
+  seq: row.seq,
+  receipt: row.receipt as Record<string, unknown>,
+  anchorHash: row.anchorHash,
+  otsProof: row.otsProof,
+  otsStatus: row.otsStatus as EvidenceReceiptRecord["otsStatus"],
+  otsConfirmedAt: row.otsConfirmedAt ? iso(row.otsConfirmedAt) : null,
+  otsBlockHeight: row.otsBlockHeight,
+  createdAt: iso(row.createdAt),
+});
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
 
 type FieldKind = "text" | "list" | "json";
@@ -788,8 +800,54 @@ export class PrismaStore implements Store {
     return { ...row, trustProofEmail: record.trustProofEmail, createdAt: iso(row.createdAt) };
   }
 
+  // Evidence Notary receipts. Ids and hashes only (no names or document text), so not sealed.
+  async lastReceipt(organizationId: string): Promise<EvidenceReceiptRecord | null> {
+    const row = await this.client.evidenceReceipt.findFirst({ where: { organizationId }, orderBy: { seq: "desc" } });
+    return row ? receiptRow(row) : null;
+  }
+
+  async addReceipt(record: Omit<EvidenceReceiptRecord, "createdAt" | "otsConfirmedAt" | "otsBlockHeight">): Promise<EvidenceReceiptRecord> {
+    try {
+      const row = await this.client.evidenceReceipt.create({
+        data: { organizationId: record.organizationId, seq: record.seq, receipt: json(record.receipt), anchorHash: record.anchorHash, otsProof: record.otsProof, otsStatus: record.otsStatus },
+      });
+      return receiptRow(row);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw Object.assign(new Error("receipt sequence number taken"), { code: "SEQ_TAKEN" });
+      throw error;
+    }
+  }
+
+  async listReceipts(organizationId: string): Promise<EvidenceReceiptRecord[]> {
+    const rows = await this.client.evidenceReceipt.findMany({ where: { organizationId }, orderBy: { seq: "asc" } });
+    return rows.map(receiptRow);
+  }
+
+  async getReceipt(organizationId: string, seq: number): Promise<EvidenceReceiptRecord | null> {
+    const row = await this.client.evidenceReceipt.findUnique({ where: { organizationId_seq: { organizationId, seq } } });
+    return row ? receiptRow(row) : null;
+  }
+
+  async listUnanchoredReceipts(limit: number): Promise<EvidenceReceiptRecord[]> {
+    const rows = await this.client.evidenceReceipt.findMany({ where: { NOT: { otsStatus: "confirmed" } }, orderBy: { createdAt: "asc" }, take: limit });
+    return rows.map(receiptRow);
+  }
+
+  async updateReceiptTimestamp(organizationId: string, seq: number, patch: Partial<Pick<EvidenceReceiptRecord, "otsProof" | "otsStatus" | "otsConfirmedAt" | "otsBlockHeight">>): Promise<void> {
+    await this.client.evidenceReceipt.update({
+      where: { organizationId_seq: { organizationId, seq } },
+      data: {
+        ...(patch.otsProof !== undefined ? { otsProof: patch.otsProof } : {}),
+        ...(patch.otsStatus !== undefined ? { otsStatus: patch.otsStatus } : {}),
+        ...(patch.otsConfirmedAt !== undefined ? { otsConfirmedAt: patch.otsConfirmedAt ? new Date(patch.otsConfirmedAt) : null } : {}),
+        ...(patch.otsBlockHeight !== undefined ? { otsBlockHeight: patch.otsBlockHeight } : {}),
+      },
+    });
+  }
+
   async reset(): Promise<void> {
     await this.client.$transaction([
+      this.client.evidenceReceipt.deleteMany(),
       this.client.consoleSigner.deleteMany(),
       this.client.billingWebhookEvent.deleteMany(),
       this.client.consoleSubscription.deleteMany(),

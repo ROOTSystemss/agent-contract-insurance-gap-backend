@@ -18,6 +18,7 @@ import type {
   ConsoleCertificate,
   ConsoleSubscription,
   ConsoleSigner,
+  EvidenceReceiptRecord,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -54,6 +55,7 @@ export class MemoryStore implements Store {
   private consoleSubscriptions = new Map<string, ConsoleSubscription>();
   private billingEvents = new Set<string>();
   private consoleSigners = new Map<string, ConsoleSigner>();
+  private receipts = new Map<string, EvidenceReceiptRecord>();
 
   async ready(): Promise<boolean> {
     return true;
@@ -471,7 +473,42 @@ export class MemoryStore implements Store {
     return saved;
   }
 
+  private receiptKey = (organizationId: string, seq: number) => `${organizationId}:${seq}`;
+
+  async lastReceipt(organizationId: string): Promise<EvidenceReceiptRecord | null> {
+    const mine = [...this.receipts.values()].filter((r) => r.organizationId === organizationId);
+    return mine.length ? clone(mine.reduce((a, b) => (b.seq > a.seq ? b : a))) : null;
+  }
+
+  async addReceipt(record: Omit<EvidenceReceiptRecord, "createdAt" | "otsConfirmedAt" | "otsBlockHeight">): Promise<EvidenceReceiptRecord> {
+    const key = this.receiptKey(record.organizationId, record.seq);
+    if (this.receipts.has(key)) throw Object.assign(new Error("receipt sequence number taken"), { code: "SEQ_TAKEN" });
+    const saved: EvidenceReceiptRecord = { ...clone(record), otsConfirmedAt: null, otsBlockHeight: null, createdAt: now() };
+    this.receipts.set(key, saved);
+    return clone(saved);
+  }
+
+  async listReceipts(organizationId: string): Promise<EvidenceReceiptRecord[]> {
+    return clone([...this.receipts.values()].filter((r) => r.organizationId === organizationId).sort((a, b) => a.seq - b.seq));
+  }
+
+  async getReceipt(organizationId: string, seq: number): Promise<EvidenceReceiptRecord | null> {
+    const found = this.receipts.get(this.receiptKey(organizationId, seq));
+    return found ? clone(found) : null;
+  }
+
+  async listUnanchoredReceipts(limit: number): Promise<EvidenceReceiptRecord[]> {
+    return clone([...this.receipts.values()].filter((r) => r.otsStatus !== "confirmed").sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, limit));
+  }
+
+  async updateReceiptTimestamp(organizationId: string, seq: number, patch: Partial<Pick<EvidenceReceiptRecord, "otsProof" | "otsStatus" | "otsConfirmedAt" | "otsBlockHeight">>): Promise<void> {
+    const key = this.receiptKey(organizationId, seq);
+    const found = this.receipts.get(key);
+    if (found) this.receipts.set(key, { ...found, ...patch });
+  }
+
   async reset(): Promise<void> {
+    this.receipts.clear();
     this.consoleSigners.clear();
     this.consoleSubscriptions.clear();
     this.billingEvents.clear();

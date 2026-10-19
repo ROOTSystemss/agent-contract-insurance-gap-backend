@@ -6,6 +6,7 @@ import type { Organization } from "../domain/types.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { PLANS } from "../governance/billing.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
+import { checkChain, recordReceipt } from "../evidence/receipts.js";
 
 // Agent Governance console API. One workspace login reaches the whole Floor 3 chain: certificates
 // are issued and revoked in Authority Atlas, actions are read from the Trust Proof ledger, and the
@@ -113,6 +114,7 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     }
     const issued = await app.governance.issueCertificate(organization, input);
     await audit(app.store, request, "certificate", issued.jti, "console.certificate_issued", { agentId: issued.agentId });
+    await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: "certificate-issued", subject: { kind: "certificate", id: issued.jti }, facts: { agentId: issued.agentId, permissions: input.permissions.length, expiresInDays: input.expiresInDays } }, request.log);
     return reply.code(201).send(success(request, issued));
   });
 
@@ -122,6 +124,7 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     const { jti } = jtiParams.parse(request.params);
     const revoked = await app.governance.revokeCertificate(organization, jti);
     await audit(app.store, request, "certificate", jti, "console.certificate_revoked");
+    await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: "certificate-revoked", subject: { kind: "certificate", id: jti }, facts: { revoked: true } }, request.log);
     return success(request, revoked);
   });
 
@@ -282,8 +285,20 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     if (!signer) throw new AppError(400, "SIGNER_NOT_READY", "Set up your signing key first.");
     const result = await app.governance.signDecision(organization, signer.trustProofEmail, String(id), body.passphrase, decline ? { reason: body.reason } : undefined);
     await audit(app.store, request, "organization", organization.id, decline ? "console.approval_declined" : "console.approval_signed", { decisionId: id });
+    await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: decline ? "approval-declined" : "approval-signed", subject: { kind: "decision", id: String(id) }, facts: { signerUserId: actor(request).userId } }, request.log);
     return success(request, result);
   }
+
+  // The workspace's Evidence Notary receipts, oldest first, with the check of the whole chain and each
+  // receipt's Bitcoin timestamp state. Each receipt can be downloaded and checked at /verify.
+  app.get("/receipts", async (request) => {
+    const organization = await workspace(request);
+    const records = await app.store.listReceipts(organization.id);
+    return success(request, {
+      chain: checkChain(organization.id, records.map((r) => r.receipt)),
+      receipts: records.map((r) => ({ seq: r.seq, type: r.receipt.type, issuedAt: r.receipt.issuedAt, subject: r.receipt.subject, timestamp: r.otsStatus, otsBlockHeight: r.otsBlockHeight, receipt: r.receipt })),
+    });
+  });
   app.post("/approvals/:id/sign", async (request) => signOrDecline(request, false));
   app.post("/approvals/:id/decline", async (request) => signOrDecline(request, true));
 

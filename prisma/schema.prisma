@@ -77,6 +77,7 @@ model Organization {
   consoleCertificates ConsoleCertificate[]
   consoleSubscription ConsoleSubscription?
   consoleSigners      ConsoleSigner[]
+  evidenceReceipts    EvidenceReceipt[]
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 }
@@ -333,4 +334,23 @@ model ConsoleSigner {
   createdAt       DateTime     @default(now())
 
   @@id([organizationId, userId])
+}
+
+// Evidence Notary receipts (src/evidence/receipts.ts): signed statements of what this service did,
+// chained per workspace, each anchored in Bitcoin with OpenTimestamps (src/evidence/timestamps.ts).
+// Ids and hashes only.
+model EvidenceReceipt {
+  organizationId String       @db.Uuid
+  seq            Int
+  receipt        Json
+  anchorHash     String
+  otsProof       String?
+  otsStatus      String       @default("not-submitted")
+  otsConfirmedAt DateTime?
+  otsBlockHeight Int?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@id([organizationId, seq])
+  @@index([otsStatus, createdAt])
 }

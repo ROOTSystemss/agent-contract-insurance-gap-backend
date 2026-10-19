@@ -149,6 +149,21 @@ export interface ConsoleSubscription {
   updatedAt: string;
 }
 
+// One Evidence Notary receipt (evidence/receipts.ts): a signed statement of something this service
+// did, chained per workspace, with its OpenTimestamps (Bitcoin) anchoring state.
+export interface EvidenceReceiptRecord {
+  organizationId: string;
+  seq: number;
+  receipt: Record<string, unknown>;
+  // SHA-256 of the receipt's signed bytes: the hash anchored with OpenTimestamps.
+  anchorHash: string;
+  otsProof: string | null;
+  otsStatus: "not-submitted" | "pending" | "confirmed";
+  otsConfirmedAt: string | null;
+  otsBlockHeight: number | null;
+  createdAt: string;
+}
+
 export interface ConsoleSigner {
   organizationId: string;
   userId: string;
