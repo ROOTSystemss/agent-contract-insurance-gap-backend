@@ -34,6 +34,19 @@ export const publicVerifyRoutes: FastifyPluginAsync = async (app) => {
       const timestamp = stored && stored.anchorHash === result.anchorHash ? { status: stored.otsStatus, blockHeight: stored.otsBlockHeight } : { status: "unknown", blockHeight: null };
       return { data: { kind: "receipt", verdict: "PASS", issuer: "AI Agent Trust", keyId: result.keyId, type: result.type, seq: result.seq, issuedAt: result.issuedAt, subject: result.subject, facts: result.facts, timestamp } };
     }
+    // An agent authority certificate: asked live of Authority Atlas, which signed it. Fails closed:
+    // anything Atlas cannot confirm (forged, expired, revoked, unreachable) is "not verified".
+    if (typeof body.certificate === "string") {
+      const { certificate } = z.object({ certificate: z.string().trim().min(20).max(8000) }).parse(body);
+      if (!app.certificateVerifier) return { data: { kind: "certificate", verdict: "FAIL", reason: "Certificate checks are not available on this server right now." } };
+      const result = await app.certificateVerifier(certificate);
+      if (!result.ok) {
+        const reason = result.reason === "verifier_unavailable" ? "The certificate could not be checked right now (Authority Atlas did not answer). Try again in a minute." : "Not a valid certificate: " + result.reason.replace(/_/g, " ") + ".";
+        return { data: { kind: "certificate", verdict: "FAIL", reason } };
+      }
+      const c = result.certificate;
+      return { data: { kind: "certificate", verdict: "PASS", agentId: c.agentId, agentName: c.agentName, organization: c.organization, organizationVerified: c.organizationVerified === true, permissions: c.permissions, limits: c.limits, issuedAt: c.issuedAt, expiresAt: c.expiresAt } };
+    }
     if (body.pack) {
       const parsed = packBody.parse(body);
       const result = verifyAssurancePack(parsed.pack, parsed.contentHash, parsed.signature, app.pqSigner);
@@ -63,14 +76,14 @@ button{margin-top:16px;background:var(--accent);color:#fff;border:0;border-radiu
 .verdict{font-size:1.3rem;font-weight:700}.PASS{color:var(--ok)}.FAIL{color:var(--bad)}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}dt{color:var(--muted)}
 </style></head><body><main>
 <h1>Check an AI Agent Trust record</h1>
-<p class="lead">Confirm that an Evidence Notary receipt or an Agent Assurance Pack was issued by AI Agent Trust and has not been changed. No account needed. Checked against the signing keys AI Agent Trust publishes at <a href="/.well-known/rootsystems-signing-keys.json">/.well-known/rootsystems-signing-keys.json</a>.</p>
-<form id="f" class="card"><label for="file">Receipt or Assurance Pack (.json)</label><input id="file" type="file" accept=".json,application/json" required>
+<p class="lead">Confirm that an agent authority certificate is genuine and still valid, or that an Evidence Notary receipt or an Agent Assurance Pack was issued by AI Agent Trust and has not been changed. No account needed. Checked against the signing keys AI Agent Trust publishes at <a href="/.well-known/rootsystems-signing-keys.json">/.well-known/rootsystems-signing-keys.json</a>.</p>
+<form id="c" class="card"><label for="cert">Agent authority certificate</label><textarea id="cert" rows="4" style="width:100%;font:13px monospace" placeholder="Paste the certificate (the long eyJ… text)"></textarea>
 <small>A receipt downloaded from the console, or the Assurance Pack exactly as it was handed to you (with its contentHash and signature).</small>
 <div><button type="submit">Check</button></div></form>
 <section id="out" class="card" hidden aria-live="polite"></section>
 </main><script>
 const esc=(s)=>String(s??"").replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-document.getElementById("f").addEventListener("submit",async(e)=>{e.preventDefault();const out=document.getElementById("out");out.hidden=false;out.textContent="Checking…";
+document.getElementById("c").addEventListener("submit",async(e)=>{e.preventDefault();const out=document.getElementById("out");out.hidden=false;out.textContent="Checking…";e.preventDefault();const out=document.getElementById("out");out.hidden=false;out.textContent="Checking…";
 try{const f=document.getElementById("file").files[0];const doc=JSON.parse(await f.text());
 const body=doc.receiptVersion?{receipt:doc}:doc.pack?{pack:doc.pack,contentHash:doc.contentHash,signature:doc.signature&&doc.signature.value?{value:doc.signature.value,publicKey:doc.signature.publicKey}:undefined}:doc.data&&doc.data.pack?{pack:doc.data.pack,contentHash:doc.data.contentHash,signature:doc.data.signature&&doc.data.signature.value?{value:doc.data.signature.value,publicKey:doc.data.signature.publicKey}:undefined}:{};
 const r=await fetch("/api/v1/public/verify",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});const j=await r.json();const d=j.data||{verdict:"FAIL",reason:(j.error&&j.error.message)||"Could not check."};

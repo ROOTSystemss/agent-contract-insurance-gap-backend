@@ -173,3 +173,43 @@ describe.runIf(Boolean(process.env.ACG_TEST_DATABASE_URL))("Evidence Notary rece
     }
   });
 });
+describe("public /verify: agent authority certificates (checked live with Authority Atlas)", () => {
+  const CERT = "eyJhbGciOiJFZERTQSJ9.certificate-for-tests.signature";
+  async function appWith(verifier: Parameters<typeof buildApp>[0] extends infer O ? O extends { certificateVerifier?: infer V } ? V : never : never) {
+    const dir = await mkdtemp(path.join(tmpdir(), "gap-cert-"));
+    const app = await buildApp({ config: loadConfig({ NODE_ENV: "test", JWT_SECRET: "test-secret-with-at-least-thirty-two-characters", UPLOAD_DIRECTORY: dir, LOG_LEVEL: "silent", PERSISTENCE_DRIVER: "memory" }), store: new MemoryStore(), logger: false, certificateVerifier: verifier, pqSigner: signer });
+    await app.ready();
+    const check = async (certificate: string) => (JSON.parse((await app.inject({ method: "POST", url: "/api/v1/public/verify", payload: { certificate } })).payload) as { data: { verdict: string; reason?: string; agentId?: string; permissions?: string[] } }).data;
+    return { app, dir, check };
+  }
+
+  it("passes a certificate Atlas confirms, with what the agent may do", async () => {
+    const { app, dir, check } = await appWith(async (c) => (c === CERT ? { ok: true, certificate: { agentId: "procure-bot", agentName: "ProcureBot", organization: "Fictional Ltd", permissions: ["invoices:read"], limits: {}, issuedAt: "2026-10-01T00:00:00Z", expiresAt: "2026-11-01T00:00:00Z" } } : { ok: false, reason: "invalid_signature" }));
+    try {
+      expect(await check(CERT)).toMatchObject({ verdict: "PASS", agentId: "procure-bot", permissions: ["invoices:read"] });
+      const forged = await check(CERT + "x");
+      expect(forged.verdict).toBe("FAIL");
+      expect(forged.reason).toMatch(/invalid signature/);
+    } finally { await app.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("fails closed when Atlas cannot be reached or no checker is configured", async () => {
+    const down = await appWith(async () => ({ ok: false, reason: "verifier_unavailable" }));
+    try {
+      const r = await down.check(CERT);
+      expect(r.verdict).toBe("FAIL");
+      expect(r.reason).toMatch(/could not be checked right now/);
+    } finally { await down.app.close(); await rm(down.dir, { recursive: true, force: true }); }
+    const none = await appWith(null);
+    try {
+      expect((await none.check(CERT)).verdict).toBe("FAIL");
+    } finally { await none.app.close(); await rm(none.dir, { recursive: true, force: true }); }
+  });
+
+  it("the page offers the certificate check", async () => {
+    const { app, dir } = await appWith(null);
+    try {
+      expect((await app.inject({ method: "GET", url: "/verify" })).payload).toContain('id="cert"');
+    } finally { await app.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+});
