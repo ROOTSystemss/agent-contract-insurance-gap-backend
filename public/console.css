@@ -21,8 +21,8 @@
   --faint: rgba(243, 234, 217, 0.4);
   --saffron: #ff9933;
   --saffron-soft: rgba(255, 153, 51, 0.14);
-  --teal: #2fd6c3;
-  --teal-soft: rgba(47, 214, 195, 0.13);
+  --teal: #3ccf6e; /* rootsystems.app --rs-teal (= --rs-green) */
+  --teal-soft: rgba(60, 207, 110, 0.13);
   --violet: #9d7cff;
   --violet-soft: rgba(157, 124, 255, 0.14);
   --rose: #ff6b7a;
@@ -67,22 +67,22 @@ button { font: inherit; color: inherit; }
 /* ---------- buttons, inputs, pills ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  height: 38px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 10px;
+  height: 38px; padding: 0 18px; border: 1px solid rgba(243, 234, 217, 0.3); border-radius: 999px; /* rootsystems.app .rs-btn--line */
   background: var(--panel); color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer;
   transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.btn:hover { background: var(--panel-strong); border-color: rgba(243, 234, 217, 0.26); }
+.btn:hover { background: var(--panel-strong); border-color: var(--cream); }
 .btn:active { transform: translateY(1px); }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
 .btn svg { width: 16px; height: 16px; }
-.btn--primary { background: linear-gradient(180deg, #ffa449, #f0862a); border-color: transparent; color: #1b0f02; box-shadow: 0 6px 22px rgba(255, 153, 51, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
-.btn--primary:hover { background: linear-gradient(180deg, #ffb266, #f58f33); }
+.btn--primary { background: var(--saffron); border-color: transparent; color: #1b0f02; box-shadow: 0 10px 30px rgba(255, 153, 51, 0.25); } /* rootsystems.app .rs-btn--solid */
+.btn--primary:hover { background: #ffad5c; border-color: transparent; transform: translateY(-1px); }
 .btn--danger { border-color: rgba(255, 107, 122, 0.45); color: var(--rose); }
 .btn--danger:hover { background: var(--rose-soft); }
 .btn--ghost { border-color: transparent; background: transparent; color: var(--mute); }
 .btn--ghost:hover { color: var(--cream); background: var(--panel); }
-.btn--sm { height: 30px; padding: 0 11px; font-size: 12px; border-radius: 8px; }
-.btn--lg { height: 46px; padding: 0 22px; font-size: 14px; border-radius: 12px; }
+.btn--sm { height: 30px; padding: 0 13px; font-size: 12px; }
+.btn--lg { height: 46px; padding: 0 26px; font-size: 14px; }
 
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--mute); letter-spacing: .01em; }
