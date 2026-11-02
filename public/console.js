@@ -362,7 +362,8 @@
         btn.disabled = false;
         waitNote.hidden = true;
         stepEls.forEach(function (el) { el.classList.remove("is-busy"); el.querySelector("svg").replaceWith(icon("check")); });
-        errText.textContent = (err && err.message ? err.message : "A linked service did not answer.") + " Press Try again in a moment.";
+        var reason = err && err.message ? err.message : "A linked service did not answer.";
+        errText.textContent = /try again/i.test(reason) ? reason : reason + " Press Try again in a moment.";
         errBox.hidden = false;
         toast(err.message, true);
       });
