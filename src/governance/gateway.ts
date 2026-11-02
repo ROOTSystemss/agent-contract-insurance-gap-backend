@@ -20,6 +20,23 @@ export interface GatewayOptions {
   accountDomain?: string;
   // CONSOLE_SERVICE_TOKEN, sent as x-rootsystems-service so Atlas/Trust Proof know this is the console.
   serviceToken?: string | null;
+  // Live QA 2026-11-02 D1: a linked free-plan service that is waking up answers 429/502/503 (or Render's
+  // wake-up page) for a while. call() waits and retries for up to this long before giving up. Tests inject sleep.
+  retryBudgetMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+// A transient answer from a linked service: busy, waking up (Render's page), or not reachable yet.
+function isTransient(status: number, text: string): boolean {
+  if (status === 429 || status === 503 || status === 502 || status === 504) return true;
+  return status >= 500 && /render|waking|service unavailable|starting up/i.test(text);
+}
+function retryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return seconds * 1000;
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
 }
 
 export interface IssueCertificateInput {
@@ -133,19 +150,40 @@ export class GovernanceGateway {
     if (token) headers.Authorization = `Bearer ${token}`;
     if (cookie) headers.Cookie = cookie;
     if (this.options.serviceToken) headers["x-rootsystems-service"] = this.options.serviceToken;
-    let response: Response;
-    try {
-      response = await this.fetchImpl(base + path, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        redirect: "manual",
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
-    } catch {
-      throw new AppError(502, "UPSTREAM_UNAVAILABLE", "A linked RootSystems service did not respond. Try again in a moment.");
+    const budget = this.options.retryBudgetMs ?? 60_000;
+    const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const started = Date.now();
+    let waited = 0;
+    let delay = 2_000;
+    let response: Response | null = null;
+    let text = "";
+    for (;;) {
+      let unreachable = false;
+      try {
+        response = await this.fetchImpl(base + path, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body),
+          redirect: "manual",
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+        text = await response.text();
+      } catch {
+        unreachable = true;
+      }
+      if (!unreachable && response && !isTransient(response.status, text)) break;
+      // Waking up or busy: wait (Retry-After when given, else 2s, 4s, 8s ... capped at 15s) within the budget.
+      const pause = Math.min(15_000, Math.max(500, (response && !unreachable ? retryAfterMs(response.headers.get("retry-after")) : null) ?? delay));
+      const spent = Math.max(waited, Date.now() - started);
+      if (spent + pause > budget) {
+        if (unreachable || !response) throw new AppError(502, "UPSTREAM_UNAVAILABLE", "A linked RootSystems service did not respond. Try again in a moment.");
+        break;
+      }
+      await sleep(pause);
+      waited += pause;
+      delay = Math.min(15_000, delay * 2);
     }
-    const text = await response.text();
+    if (!response) throw new AppError(502, "UPSTREAM_UNAVAILABLE", "A linked RootSystems service did not respond. Try again in a moment.");
     let parsed: unknown = text;
     try {
       parsed = text ? JSON.parse(text) : null;

@@ -331,6 +331,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
   });
 
+  // Live QA 2026-11-02 D2: /terms, /privacy and /refund were 404. They go to the company policies on rootsystems.app.
+  for (const page of ["terms", "privacy", "refund"] as const) {
+    app.get(`/${page}`, { schema: { hide: true } }, async (_request, reply) => reply.redirect(`https://rootsystems.app/${page}`, 302));
+  }
   app.get(
     "/health",
     { schema: { tags: ["system"], summary: "Liveness check" } },
