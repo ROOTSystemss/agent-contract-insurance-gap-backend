@@ -337,17 +337,34 @@
     ];
     var stepEls = steps.map(function (s) { return h("div", { class: "step" }, h("b", null, icon("check"), s.title), h("p", { text: s.text })); });
     var btn = h("button", { class: "btn btn--primary btn--lg" }, icon("bolt"), "Activate Agent Governance");
+    // Live QA 2026-11-02 D1: a failed activation only flashed a toast. It now stays on the page with the
+    // reason and a "Try again" button; while waiting it says a linked service may be waking up.
+    var waitNote = h("p", { class: "muted", id: "activate-wait", text: "Linking your services… this can take up to a minute if one is waking up." });
+    waitNote.hidden = true;
+    var errText = h("p", { id: "activate-error-text" });
+    var retry = h("button", { class: "btn btn--secondary", id: "activate-retry" }, "Try again");
+    var errBox = h("div", { class: "notice notice--error", id: "activate-error", role: "alert" }, h("b", { text: "Activation did not finish." }), errText, retry);
+    errBox.hidden = true;
+    retry.addEventListener("click", function () { btn.click(); });
     btn.addEventListener("click", function () {
+      if (btn.disabled) return;
       btn.disabled = true;
+      errBox.hidden = true;
+      waitNote.hidden = false;
       stepEls.forEach(function (el) { el.classList.add("is-busy"); el.querySelector("svg").replaceWith(icon("loader")); });
       api("/console/link", { method: "POST" }).then(function () {
+        waitNote.hidden = true;
         stepEls.forEach(function (el) { el.classList.remove("is-busy"); el.classList.add("is-done"); el.querySelector("svg").replaceWith(icon("check")); });
         state.status.linked = true;
         toast("Agent Governance is active");
         setTimeout(render, 700);
       }).catch(function (err) {
         btn.disabled = false;
+        waitNote.hidden = true;
         stepEls.forEach(function (el) { el.classList.remove("is-busy"); el.querySelector("svg").replaceWith(icon("check")); });
+        var reason = err && err.message ? err.message : "A linked service did not answer.";
+        errText.textContent = /try again/i.test(reason) ? reason : reason + " Press Try again in a moment.";
+        errBox.hidden = false;
         toast(err.message, true);
       });
     });
@@ -356,7 +373,7 @@
       h("h2", { style: "margin-top:16px" }, "Give every agent a signed scope of authority."),
       h("p", { text: "Activation creates this workspace's private links to Agent Certificates and Action Ledger. It takes a few seconds (up to a minute if a service is waking up) and only happens once." }),
       h("div", { class: "steps" }, stepEls),
-      btn));
+      btn, waitNote, errBox));
   }
 
   function kpi(label, value, sub, iconName, tone) {

@@ -64,7 +64,7 @@ try {
   atlas = await start(["src/server.js"], ATLAS_DIR, {
     PORT: String(ATLAS_PORT), NODE_ENV: "production", DATABASE_URL: "",
     ATLAS_PRIVATE_KEY_B64: b64(privateKey), ATLAS_PUBLIC_KEY_B64: b64(publicKey),
-    PQ_SIGNING_SEED: Buffer.alloc(32, 71).toString("base64"), CONSOLE_SERVICE_TOKEN: SERVICE_TOKEN,
+    PQ_SIGNING_SEED: Buffer.alloc(32, 71).toString("base64"), CONSOLE_SERVICE_TOKEN: SERVICE_TOKEN, PII_ENCRYPTION_KEY: crypto.randomBytes(32).toString("hex"),
   }, /running on/);
   tp = await start(["src/app.js"], TP_DIR, {
     PORT: String(TP_PORT), DATA_DIR, NODE_ENV: "development", ATLAS_URL: ATLAS, APP_URL: TP, DATABASE_URL: "",
