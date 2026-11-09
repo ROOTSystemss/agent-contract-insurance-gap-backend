@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyPluginAsync } from "fastify";
+import { SOCIAL_LINKS_MARKER, socialLinksHtml } from "./social-links";
 
 const assets = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -31,7 +32,8 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
 
   for (const [route, asset] of Object.entries(assets)) {
     app.get(route, async (_request, reply) => {
-      const contents = await readFile(path.join(publicDirectory, asset.file));
+      const file = await readFile(path.join(publicDirectory, asset.file));
+      const contents = asset.type.startsWith("text/html") ? file.toString("utf8").replace(SOCIAL_LINKS_MARKER, socialLinksHtml()) : file;
       return reply
         .header("Cache-Control", route === "/" || route === "/console" ? "no-cache" : "public, max-age=3600")
         .type(asset.type)
