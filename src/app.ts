@@ -47,6 +47,7 @@ import type { Store } from "./persistence/store.js";
 import type { Role } from "./domain/types.js";
 import { CANONICAL_DISCLAIMER } from "./shared/disclaimer.js";
 import { AppError, loggableError, unauthorized } from "./shared/errors.js";
+import { ENGINE_VERSION } from "./analysis/gap-engine.js";
 
 export interface BuildAppOptions {
   config?: AppConfig;
@@ -376,7 +377,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     data: {
       name: "Agent Contract & Insurance Gap Engine",
       version: "0.1.0",
-      engineVersion: "gap-engine@1.0.0",
+      engineVersion: ENGINE_VERSION,
       primaryStatement:
         "Identify where an AI agent’s actual authority may exceed what your contracts and insurance policies clearly contemplate.",
       deterministicByDefault: true,

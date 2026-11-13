@@ -98,6 +98,8 @@ describe("API integration", () => {
     const meta = await app.inject({ method: "GET", url: "/api/v1/meta" });
     expect(meta.statusCode).toBe(200);
     expect(meta.body).toContain("not legal advice");
+    // The contradiction findings shipped as gap-engine 1.1.0; /meta reports the version analyses record.
+    expect(meta.json().data.engineVersion).toBe("gap-engine@1.1.0");
     expect((await app.inject({ method: "GET", url: "/api/v1/openapi.json" })).statusCode).toBe(200);
     expect([200, 302]).toContain((await app.inject({ method: "GET", url: "/docs" })).statusCode);
   });

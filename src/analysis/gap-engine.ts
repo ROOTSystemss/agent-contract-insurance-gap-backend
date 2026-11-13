@@ -12,7 +12,8 @@ import type { PackSelection } from "../jurisdictions/packs.js";
 import { evidenceForMatch } from "./clause-detector.js";
 import { CLAUSE_LIBRARY_VERSION, findContradictions } from "./clause-library.js";
 
-export const ENGINE_VERSION = "gap-engine@1.0.0";
+// 1.1.0: BM clause library contradiction findings (clause-library.ts). Analyses keep the version they ran with.
+export const ENGINE_VERSION = "gap-engine@1.1.0";
 export const UNIVERSAL_RULE_VERSION = "universal-gap-rules@1.1.0";
 
 // Standard-form AI exclusions. Since 1 January 2026 insurers can attach ISO generative-AI exclusion
