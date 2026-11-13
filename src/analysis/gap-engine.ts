@@ -10,6 +10,7 @@ import type {
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
 import type { PackSelection } from "../jurisdictions/packs.js";
 import { evidenceForMatch } from "./clause-detector.js";
+import { CLAUSE_LIBRARY_VERSION, findContradictions } from "./clause-library.js";
 
 export const ENGINE_VERSION = "gap-engine@1.0.0";
 export const UNIVERSAL_RULE_VERSION = "universal-gap-rules@1.1.0";
@@ -482,6 +483,34 @@ export function analyzeGaps(input: {
           "Ask whether earlier occurrence-based policy years, written before this endorsement, still respond to claims from those years.",
         ],
         reviewer: "insurance_broker_or_insurer",
+      }),
+    );
+  }
+
+  // BM clause library: declared capabilities that a restriction clause contradicts, quoting both.
+  for (const c of findContradictions(input.agent, input.documents)) {
+    findings.push(
+      buildFinding(input.organizationId, input.projectId, input.analysisId, {
+        key: c.key,
+        title: c.title,
+        category: c.category,
+        severity: c.severity,
+        confidence: c.confidence,
+        capability: c.capability,
+        document: input.documents.find((d) => d.id === c.documentId) ?? null,
+        clauseCategory: c.clauseCategory,
+        documentFact: c.documentFact,
+        agentFact: c.agentFact,
+        inference: c.inference,
+        rule: c.rule,
+        evidence: c.evidence,
+        uncertainty:
+          "The clause may be qualified elsewhere in the document, or the agent's real controls may differ from the profile.",
+        limitations: [
+          `Matched by fixed patterns (${CLAUSE_LIBRARY_VERSION}); this is not a legal interpretation of the clause.`,
+        ],
+        questions: [c.question],
+        reviewer: c.reviewer,
       }),
     );
   }
