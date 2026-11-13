@@ -9,7 +9,7 @@ import { sha512Hex, type PqSigner } from "./pq-sign.js";
 
 export const KEYRING_FORMAT = "rootsystems.keyring/v1";
 
-interface RingKey { keyId: string; algorithm?: string; publicKey: string; status: "active" | "retired"; validFrom?: string | null; validUntil?: string | null }
+interface RingKey { keyId: string; algorithm?: string; publicKey: string; status: "active" | "retired"; validFrom?: string | null; validUntil?: string | null; endorsedBy?: unknown }
 
 const isDate = (v: unknown) => v === null || v === undefined || (typeof v === "string" && !Number.isNaN(Date.parse(v)));
 
@@ -30,7 +30,7 @@ export function keyHistory(product: string, signer: PqSigner | null, rawHistory:
     let ring: unknown = null;
     try { ring = JSON.parse(rawHistory); } catch { /* reported below */ }
     if (wellFormed(ring, signer.publicKey)) {
-      return { format: KEYRING_FORMAT, product, keys: ring.keys.map((k) => ({ keyId: k.keyId, algorithm: k.algorithm ?? "ML-DSA-65", publicKey: k.publicKey, status: k.status, validFrom: k.validFrom ?? null, validUntil: k.validUntil ?? null })) };
+      return { format: KEYRING_FORMAT, product, keys: ring.keys.map((k) => ({ keyId: k.keyId, algorithm: k.algorithm ?? "ML-DSA-65", publicKey: k.publicKey, status: k.status, validFrom: k.validFrom ?? null, validUntil: k.validUntil ?? null, ...(k.endorsedBy ? { endorsedBy: k.endorsedBy } : {}) })) };
     }
     console.warn("[keyHistory] PQ_KEY_HISTORY_JSON ignored: it is not a well-formed keyring whose active key is the key signing now.");
   }

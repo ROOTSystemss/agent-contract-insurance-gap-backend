@@ -23,6 +23,19 @@ describe("signing key history", () => {
     expect(h.keys.map((k) => k.status)).toEqual(["retired", "active"]);
   });
 
+  // rs-keys rotate writes each key's endorsement by its predecessor; offline verifiers need it to follow
+  // the rotation (core verifyKeyring refuses a history without it: missing_endorsement).
+  it("keeps each key's endorsement by its predecessor", () => {
+    const endorsedBy = { keyId: older!.keyId, algorithm: "ML-DSA-65", signedAt: "2026-10-01T00:00:00.000Z", signature: "ZW5kb3JzZW1lbnQ=" };
+    const ring = { format: KEYRING_FORMAT, keys: [
+      { keyId: older!.keyId, publicKey: older!.publicKey, status: "retired", validUntil: "2026-10-01" },
+      { keyId: signer!.keyId, publicKey: signer!.publicKey, status: "active", validFrom: "2026-10-01", endorsedBy },
+    ] };
+    const h = keyHistory("ai-agent-trust", signer, JSON.stringify(ring))!;
+    expect(h.keys[1]).toMatchObject({ endorsedBy });
+    expect("endorsedBy" in h.keys[0]!).toBe(false);
+  });
+
   it("ignores a history with a wrong key id or a different active key (fail closed)", () => {
     const wrongId = { format: KEYRING_FORMAT, keys: [{ keyId: "0".repeat(32), publicKey: signer!.publicKey, status: "active" }] };
     expect(keyHistory("ai-agent-trust", signer, JSON.stringify(wrongId))!.keys[0]!.keyId).toBe(signer!.keyId);
