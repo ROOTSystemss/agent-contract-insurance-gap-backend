@@ -1,0 +1,19 @@
+name: tests
+# BP-10 (2026-11-13): every push runs the typecheck and the test suite, which includes the tamper tests
+# (an assurance pack or receipt with one character changed must fail verification).
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit
+      - run: npx vitest run

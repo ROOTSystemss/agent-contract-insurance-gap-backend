@@ -529,6 +529,18 @@ function openProjectModal(prefill = {}) {
   });
 }
 
+// Plain-English hints for the capabilities buyers find unclear (Max Additions AD-072, 2026-11-13).
+const capabilityHints = {
+  canMakeRepresentations: "Tells customers things on your behalf, such as prices, promises or facts about a product.",
+  canAcceptTerms: "Clicks \"I agree\" or accepts conditions for your company.",
+  canExecuteTransactions: "Completes an order, booking, transfer or refund itself, not just a draft.",
+  canEnterContracts: "Signs or agrees to a contract for your company.",
+  canAccessSensitivePersonalData: "Health, financial, ID numbers, or similar special data about people.",
+  canAccessRegulatedData: "Data a law controls, such as patient records (HIPAA) or card numbers (PCI).",
+  canCreateIntellectualProperty: "Writes text, code or designs your company will own or publish.",
+  canDelegateToSubAgents: "Hands tasks to other AI agents or bots.",
+  canControlInfrastructure: "Changes servers, cloud settings or networks.",
+};
 const capabilityFields = [
   ["canCommunicateExternally", "Communicate externally"],
   ["canMakeRepresentations", "Make representations"],
@@ -565,33 +577,33 @@ function renderAgent() {
           <div class="field full"><label for="agent-purpose">Business purpose</label><textarea id="agent-purpose" name="businessPurpose" required minlength="5" placeholder="Reviews vendor proposals and prepares purchase recommendations.">${escapeHtml(agent.businessPurpose || "")}</textarea></div>
           <div class="field"><label for="operator">Operator organization</label><input id="operator" name="operatorOrganization" required value="${escapeHtml(agent.operatorOrganization || state.me.organization.name)}" /></div>
           <div class="field"><label for="provider">Developer / provider</label><input id="provider" name="developerProvider" value="${escapeHtml(agent.developerProvider || "")}" placeholder="Internal team or vendor" /></div>
-          <div class="field"><label for="agent-type">Agent type</label><input id="agent-type" name="agentType" required value="${escapeHtml(agent.agentType || "Task-oriented AI agent")}" /></div>
-          <div class="field"><label for="jurisdiction">Primary jurisdiction</label><input id="jurisdiction" name="primaryJurisdiction" required maxlength="2" value="${escapeHtml(agent.primaryJurisdiction || state.project.primaryCountryCode)}" /></div>
-          <div class="field"><label for="deployment-countries">Deployment countries</label><input id="deployment-countries" name="deploymentCountries" required value="${escapeHtml((agent.deploymentCountries || [state.project.primaryCountryCode]).join(", "))}" /></div>
-          <div class="field"><label for="affected-agent-countries">Affected countries</label><input id="affected-agent-countries" name="affectedCountries" value="${escapeHtml((agent.affectedCountries || state.project.affectedCountryCodes || []).join(", "))}" /></div>
+          <div class="field"><label for="agent-type">Agent type</label><input id="agent-type" name="agentType" required value="${escapeHtml(agent.agentType || "Task-oriented AI agent")}" /><span class="field-hint" data-hint="agentType">In a few words, what kind of agent it is, e.g. "customer support chatbot" or "invoice assistant".</span></div>
+          <div class="field"><label for="jurisdiction">Primary jurisdiction</label><input id="jurisdiction" name="primaryJurisdiction" required maxlength="2" value="${escapeHtml(agent.primaryJurisdiction || state.project.primaryCountryCode)}" /><span class="field-hint" data-hint="primaryJurisdiction">Two-letter code of the country whose law mainly applies, e.g. US.</span></div>
+          <div class="field"><label for="deployment-countries">Deployment countries</label><input id="deployment-countries" name="deploymentCountries" required value="${escapeHtml((agent.deploymentCountries || [state.project.primaryCountryCode]).join(", "))}" /><span class="field-hint" data-hint="deploymentCountries">Where the agent runs or is used, as two-letter codes separated by commas.</span></div>
+          <div class="field"><label for="affected-agent-countries">Affected countries</label><input id="affected-agent-countries" name="affectedCountries" value="${escapeHtml((agent.affectedCountries || state.project.affectedCountryCodes || []).join(", "))}" /><span class="field-hint" data-hint="affectedCountries">Countries where the people it deals with live, if different. Optional.</span></div>
         </div>
       </section>
       <section class="form-section"><div class="form-section-title"><span class="section-number">02</span><div><h3>Authority and oversight</h3><p>Define autonomy, review controls, and financial boundaries.</p></div></div>
         <div class="field-grid">
-          <div class="field"><label for="autonomy">Autonomy level (0–5)</label><input id="autonomy" name="autonomyLevel" type="number" min="0" max="5" required value="${agent.autonomyLevel ?? 2}" /></div>
-          <div class="field"><label for="oversight">Human oversight</label><select id="oversight" name="humanOversightLevel">${["continuous", "pre_action_approval", "threshold_approval", "periodic_review", "exception_only", "none"].map((value) => `<option value="${value}" ${agent.humanOversightLevel === value ? "selected" : ""}>${pretty(value)}</option>`).join("")}</select></div>
-          <div class="field"><label for="reversibility">Reversibility</label><select id="reversibility" name="reversibility">${["fully_reversible", "partially_reversible", "irreversible", "unknown"].map((value) => `<option value="${value}" ${agent.reversibility === value ? "selected" : ""}>${pretty(value)}</option>`).join("")}</select></div>
-          <div class="field"><label for="logging">Logging level</label><select id="logging" name="loggingLevel">${["none", "basic", "detailed", "tamper_evident"].map((value) => `<option value="${value}" ${agent.loggingLevel === value ? "selected" : ""}>${pretty(value)}</option>`).join("")}</select></div>
-          <div class="field"><label for="transaction-limit">Per-transaction limit</label><input id="transaction-limit" name="perTransactionLimit" type="number" min="0" value="${agent.perTransactionLimit ?? ""}" placeholder="5000" /></div>
-          <div class="field"><label for="aggregate-limit">Aggregate spending limit</label><input id="aggregate-limit" name="aggregateSpendingLimit" type="number" min="0" value="${agent.aggregateSpendingLimit ?? ""}" placeholder="25000" /></div>
+          <div class="field"><label for="autonomy">Autonomy level (0–5)</label><input id="autonomy" name="autonomyLevel" type="number" min="0" max="5" required value="${agent.autonomyLevel ?? 2}" /><span class="field-hint" data-hint="autonomyLevel">0 = only suggests, a person does everything; 5 = acts completely on its own. Most assistants are 1 to 3.</span></div>
+          <div class="field"><label for="oversight">Human oversight</label><select id="oversight" name="humanOversightLevel">${["continuous", "pre_action_approval", "threshold_approval", "periodic_review", "exception_only", "none"].map((value) => `<option value="${value}" ${agent.humanOversightLevel === value ? "selected" : ""}>${pretty(value)}</option>`).join("")}</select><span class="field-hint" data-hint="humanOversightLevel">When a person checks its work: before every action, only above a limit (threshold), afterwards, or never.</span></div>
+          <div class="field"><label for="reversibility">Reversibility</label><select id="reversibility" name="reversibility">${["fully_reversible", "partially_reversible", "irreversible", "unknown"].map((value) => `<option value="${value}" ${agent.reversibility === value ? "selected" : ""}>${pretty(value)}</option>`).join("")}</select><span class="field-hint" data-hint="reversibility">Can its mistakes be undone? A sent payment or email usually cannot; a draft can.</span></div>
+          <div class="field"><label for="logging">Logging level</label><select id="logging" name="loggingLevel">${["none", "basic", "detailed", "tamper_evident"].map((value) => `<option value="${value}" ${agent.loggingLevel === value ? "selected" : ""}>${pretty(value)}</option>`).join("")}</select><span class="field-hint" data-hint="loggingLevel">How much of what it does is written down. Tamper-evident = a record nobody can quietly edit later.</span></div>
+          <div class="field"><label for="transaction-limit">Per-transaction limit</label><input id="transaction-limit" name="perTransactionLimit" type="number" min="0" value="${agent.perTransactionLimit ?? ""}" placeholder="5000" /><span class="field-hint" data-hint="perTransactionLimit">Most money it may move in one action. Leave empty if it cannot spend money.</span></div>
+          <div class="field"><label for="aggregate-limit">Aggregate spending limit</label><input id="aggregate-limit" name="aggregateSpendingLimit" type="number" min="0" value="${agent.aggregateSpendingLimit ?? ""}" placeholder="25000" /><span class="field-hint" data-hint="aggregateSpendingLimit">Most money it may move in total (per day or month, as you set it up). Leave empty if none.</span></div>
           <div class="field"><label for="currency">Currency</label><input id="currency" name="currency" maxlength="3" value="${escapeHtml(agent.currency || "USD")}" /></div>
-          <div class="field"><label for="thresholds">Approval thresholds</label><input id="thresholds" name="approvalThresholds" value="${escapeHtml((agent.approvalThresholds || []).join(", "))}" placeholder="Human approval above $1,000" /></div>
+          <div class="field"><label for="thresholds">Approval thresholds</label><input id="thresholds" name="approvalThresholds" value="${escapeHtml((agent.approvalThresholds || []).join(", "))}" placeholder="Human approval above $1,000" /><span class="field-hint" data-hint="approvalThresholds">The rules for when a person must say yes first, separated by commas.</span></div>
         </div>
       </section>
       <section class="form-section"><div class="form-section-title"><span class="section-number">03</span><div><h3>Capabilities</h3><p>Select every action the agent can perform, even when approval is required.</p></div></div>
-        <div class="toggle-grid">${capabilityFields.map(([name, label]) => `<label class="toggle"><input type="checkbox" name="${name}" ${agent[name] ? "checked" : ""} /><span>${label}</span></label>`).join("")}</div>
+        <div class="toggle-grid">${capabilityFields.map(([name, label]) => `<label class="toggle"${capabilityHints[name] ? ` title="${escapeHtml(capabilityHints[name])}"` : ""}><input type="checkbox" name="${name}" ${agent[name] ? "checked" : ""} /><span>${label}${capabilityHints[name] ? `<small class="field-hint" data-hint="${name}" style="display:block">${escapeHtml(capabilityHints[name])}</small>` : ""}</span></label>`).join("")}</div>
       </section>
       <section class="form-section"><div class="form-section-title"><span class="section-number">04</span><div><h3>Systems and safeguards</h3><p>Add operational context that a reviewer should understand.</p></div></div>
         <div class="field-grid">
           <div class="field"><label for="tools">Third-party tools</label><input id="tools" name="thirdPartyToolsUsed" value="${escapeHtml((agent.thirdPartyToolsUsed || []).join(", "))}" placeholder="OpenAI API, Stripe" /></div>
           <div class="field"><label for="systems">Systems accessed</label><input id="systems" name="systemsAccessed" value="${escapeHtml((agent.systemsAccessed || []).join(", "))}" placeholder="CRM, procurement portal" /></div>
-          <div class="field"><label for="stop">Emergency stop mechanism</label><input id="stop" name="emergencyStopMechanism" value="${escapeHtml(agent.emergencyStopMechanism || "")}" placeholder="Operator kill switch" /></div>
-          <div class="field"><label for="incident-owner">Incident response owner</label><input id="incident-owner" name="incidentResponseOwner" value="${escapeHtml(agent.incidentResponseOwner || "")}" placeholder="Security Operations" /></div>
+          <div class="field"><label for="stop">Emergency stop mechanism</label><input id="stop" name="emergencyStopMechanism" value="${escapeHtml(agent.emergencyStopMechanism || "")}" placeholder="Operator kill switch" /><span class="field-hint" data-hint="emergencyStopMechanism">How someone stops it right now if it misbehaves, e.g. "admin switches it off in the dashboard".</span></div>
+          <div class="field"><label for="incident-owner">Incident response owner</label><input id="incident-owner" name="incidentResponseOwner" value="${escapeHtml(agent.incidentResponseOwner || "")}" placeholder="Security Operations" /><span class="field-hint" data-hint="incidentResponseOwner">The person or team called when it does something wrong.</span></div>
           <div class="field full"><label for="limitations">Known limitations</label><textarea id="limitations" name="knownLimitations" placeholder="Cannot verify vendor identity without human review.">${escapeHtml((agent.knownLimitations || []).join("\n"))}</textarea></div>
           <div class="field full"><label for="notes">Reviewer notes</label><textarea id="notes" name="notes">${escapeHtml(agent.notes || "")}</textarea></div>
         </div>
