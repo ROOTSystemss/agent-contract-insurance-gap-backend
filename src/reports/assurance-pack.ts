@@ -3,6 +3,7 @@ import type { Analysis, AgentProfile, DocumentRecord, Finding, Severity } from "
 import { ALL_CAPABILITIES, type Reconciliation } from "../authority/certificate.js";
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
 import { PQ_ALGORITHM, PQ_STANDARD, sha512Hex, verifyWithPublicKey, type PqSigner } from "../crypto/pq-sign.js";
+import { keyCoversTime, type PublishedKey } from "../crypto/key-history.js";
 
 // The Agent Assurance Pack: one fingerprinted summary of "what this agent is authorized to do,
 // what the contracts and insurance say about it, and where the gaps are", for handing to a
@@ -158,21 +159,33 @@ export interface PackSignatureInput {
   value: string;
   publicKey?: string;
 }
+// `keys` is this service's published key history (crypto/key-history.ts publishedKeys): a pack signed
+// before a key rotation still verifies with the retired key, but only if it was generated (its signed
+// generatedAt) before that key's validUntil. Without `keys`, only the current signing key counts.
 export function verifyAssurancePack(
   pack: unknown,
   contentHash: string,
   signature?: PackSignatureInput,
   signer: PqSigner | null = null,
-): { valid: boolean; computedHash: string; signature: { status: "not_supplied" | "valid" | "invalid" | "not_this_service"; keyId?: string } } {
+  keys?: PublishedKey[],
+): { valid: boolean; computedHash: string; signature: { status: "not_supplied" | "valid" | "invalid" | "not_this_service" | "signed_after_key_retired"; keyId?: string } } {
   const computedHash = hashPack(pack);
   const hashValid = computedHash === contentHash.toLowerCase();
   if (!signature) return { valid: hashValid, computedHash, signature: { status: "not_supplied" } };
   const bytes = Buffer.from(canonicalJson(pack), "utf8");
+  const published: PublishedKey[] = keys ?? (signer ? [{ keyId: signer.keyId, publicKey: signer.publicKey, status: "active", validUntil: null }] : []);
+  // Packs from before signatures carried their public key were always signed by the key active at the time.
+  const claimed = signature.publicKey ?? signer?.publicKey;
+  const key = claimed ? published.find((k) => k.publicKey === claimed) : undefined;
   // A signature by some other key is not this service's statement, even if it is mathematically sound.
-  if (!signer || (signature.publicKey && signature.publicKey !== signer.publicKey)) {
+  if (!key) {
     const sound = signature.publicKey ? verifyWithPublicKey(bytes, signature.value, signature.publicKey) : false;
     return { valid: false, computedHash, signature: { status: sound ? "not_this_service" : "invalid" } };
   }
-  const signatureValid = signer.verify(bytes, signature.value);
-  return { valid: hashValid && signatureValid, computedHash, signature: { status: signatureValid ? "valid" : "invalid", keyId: signer.keyId } };
+  const signatureValid = verifyWithPublicKey(bytes, signature.value, key.publicKey);
+  if (!signatureValid) return { valid: false, computedHash, signature: { status: "invalid", keyId: key.keyId } };
+  if (!keyCoversTime(key, (pack as { generatedAt?: unknown } | null)?.generatedAt)) {
+    return { valid: false, computedHash, signature: { status: "signed_after_key_retired", keyId: key.keyId } };
+  }
+  return { valid: hashValid, computedHash, signature: { status: "valid", keyId: key.keyId } };
 }

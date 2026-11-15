@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import cors from "@fastify/cors";
@@ -17,7 +18,7 @@ import { ConsoleBilling, PLANS } from "./governance/billing.js";
 import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
-import { keyHistory } from "./crypto/key-history.js";
+import { assertKeyHistory, keyHistory } from "./crypto/key-history.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
 import { analysisRoutes, projectAnalysisRoutes } from "./api/analysis-routes.js";
 import { authRoutes } from "./api/auth-routes.js";
@@ -33,6 +34,10 @@ import { governanceRoutes } from "./api/governance-routes.js";
 import { oauthRoutes } from "./api/oauth-routes.js";
 import { loadConfig, type AppConfig } from "./config/env.js";
 import { OAuthCodeStore } from "./security/oauth-code-store.js";
+import { AccountSecurity } from "./security/account-security.js";
+import { createLoginAttempts, knownDevices } from "./security/login-attempts.js";
+import { trustProxyHops } from "./security/client-ip.js";
+import { createResendMailer, noMailer, type Mailer } from "./security/mailer.js";
 import { DocumentService } from "./documents/document-service.js";
 import {
   EncryptedDocumentStorage,
@@ -59,6 +64,8 @@ export interface BuildAppOptions {
   pqSigner?: PqSigner | null;
   // Tests point the console gateway at stand-in services (and a fake fetch).
   governance?: Partial<GatewayOptions>;
+  // Tests capture verification and reset emails; production uses Resend when RESEND_API_KEY is set.
+  mailer?: Mailer;
 }
 
 // Our own origin comes from PUBLIC_BASE_URL - never from the request's Host header, which a client
@@ -120,7 +127,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
               censor: "[REDACTED]",
             },
           },
-    trustProxy: config.TRUST_PROXY,
+    trustProxy: config.TRUST_PROXY_HOPS !== undefined ? trustProxyHops(config.TRUST_PROXY_HOPS) : config.TRUST_PROXY,
     bodyLimit: Math.max(config.MAX_FILE_SIZE_BYTES + 1024 * 1024, 2 * 1024 * 1024),
     requestIdHeader: "x-request-id",
   });
@@ -162,6 +169,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }),
   );
   app.decorate("pqSigner", options.pqSigner !== undefined ? options.pqSigner : createPqSigner(config.PQ_SIGNING_SEED));
+  // A key history that is set but unusable stops startup (old signed documents would otherwise fail to verify).
+  assertKeyHistory(app.pqSigner, process.env.PQ_KEY_HISTORY_JSON);
+  const mailer =
+    options.mailer ??
+    (config.RESEND_API_KEY
+      ? createResendMailer({ apiKey: config.RESEND_API_KEY, from: config.MAIL_FROM_ADDRESS, replyTo: config.MAIL_REPLY_TO })
+      : noMailer);
+  app.decorate("accountSecurity", new AccountSecurity(store, mailer, config));
+  app.decorate("loginAttempts", createLoginAttempts());
+  app.decorate("knownDevices", knownDevices(config.JWT_SECRET));
   app.decorateRequest("actor", null);
 
   await app.register(helmet, {
@@ -228,9 +245,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         sub: string;
         organizationId: string;
         role: Role;
+        iat?: number;
       }>();
       const membership = await store.getMembership(payload.sub, payload.organizationId);
       if (!membership || membership.role !== payload.role) throw unauthorized();
+      // A password change or reset ends every session that started before it.
+      const user = await store.getUser(payload.sub);
+      if (!user) throw unauthorized();
+      if (user.passwordChangedAt && (payload.iat ?? 0) < Math.floor(Date.parse(user.passwordChangedAt) / 1000)) throw unauthorized();
       request.actor = {
         userId: payload.sub,
         organizationId: payload.organizationId,
@@ -261,6 +283,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (config.NODE_ENV !== "test") stopReceiptSweep = startReceiptTimestampSweep(store, app.log);
   });
   let stopReceiptSweep: (() => void) | undefined;
+  app.addHook("onReady", async () => {
+    if (config.EMAIL_VERIFICATION === "0") app.log.warn("EMAIL_VERIFICATION=0: email verification is switched off.");
+    else if (app.accountSecurity.required && !config.RESEND_API_KEY && !options.mailer)
+      app.log.warn("Email verification is required but RESEND_API_KEY is not set: verification and password-reset emails cannot be delivered.");
+  });
 
   app.addHook("onClose", async () => {
     stopReceiptSweep?.();
@@ -321,11 +348,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (statusCode >= 500) request.log.error({ err: loggableError(error) }, "request failed");
     return reply.code(statusCode).send({
       error: {
-        code: statusCode === 413 ? "PAYLOAD_TOO_LARGE" : "INTERNAL_ERROR",
+        code:
+          statusCode === 413 ? "PAYLOAD_TOO_LARGE"
+          : statusCode === 429 ? "RATE_LIMITED"
+          : statusCode >= 500 ? "INTERNAL_ERROR"
+          : "BAD_REQUEST",
         message:
-          statusCode === 413
-            ? "The request payload exceeds the configured limit."
-            : "An unexpected error occurred.",
+          statusCode === 413 ? "The request payload exceeds the configured limit."
+          : statusCode === 429 ? "Too many requests. Wait a minute and try again."
+          : statusCode >= 500 ? "An unexpected error occurred."
+          : "The request could not be processed.",
         details: [],
         requestId: request.id,
       },
@@ -341,6 +373,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     { schema: { tags: ["system"], summary: "Liveness check" } },
     async (request) => ({ data: { status: "ok" }, meta: {}, requestId: request.id }),
   );
+  // Operator diagnostic for the proxy chain: off unless IP_DIAGNOSTICS_TOKEN is set, then answers only a
+  // request carrying it, with that request's own forwarding headers and the client address derived from them.
+  app.get("/health/ip", { schema: { hide: true } }, async (request, reply) => {
+    const expected = config.IP_DIAGNOSTICS_TOKEN ?? "";
+    const supplied = String(request.headers["x-diagnostics-token"] ?? "");
+    const ok = expected.length >= 32 && supplied.length === expected.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+    if (!ok) return reply.code(404).send({ error: { code: "ROUTE_NOT_FOUND", message: "The requested route was not found.", details: [], requestId: request.id } });
+    const hidden = new Set(["authorization", "cookie", "x-diagnostics-token", "x-rootsystems-service"]);
+    const headers = Object.fromEntries(Object.entries(request.headers).filter(([key]) => !hidden.has(key)));
+    return { socket: request.socket.remoteAddress, derivedIp: request.ip, headers };
+  });
   app.get(
     "/.well-known/rootsystems-signing-key.json",
     { schema: { tags: ["system"], summary: "Public ML-DSA-65 key that signs Assurance Packs" } },

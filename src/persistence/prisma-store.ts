@@ -5,6 +5,7 @@ import type {
   Analysis,
   AttentionScore,
   AuditEvent,
+  AuthTokenPurpose,
   DocumentRecord,
   Finding,
   FindingStatus,
@@ -78,12 +79,14 @@ export class PrismaStore implements Store {
     return json(this.vault.sealJson(value));
   }
 
-  private user(row: { id: string; email: string; name: string; passwordHash: string; createdAt: Date; updatedAt: Date }): User {
+  private user(row: { id: string; email: string; name: string; passwordHash: string; emailVerifiedAt: Date | null; passwordChangedAt: Date | null; createdAt: Date; updatedAt: Date }): User {
     return {
       id: row.id,
       email: this.vault.open(row.email),
       name: this.vault.open(row.name),
       passwordHash: row.passwordHash,
+      emailVerifiedAt: row.emailVerifiedAt ? iso(row.emailVerifiedAt) : null,
+      passwordChangedAt: row.passwordChangedAt ? iso(row.passwordChangedAt) : null,
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),
     };
@@ -150,7 +153,7 @@ export class PrismaStore implements Store {
     upgraded += await this.upgradeTable("DocumentSegment", "id", { sectionHeading: "text", normalizedText: "text", originalText: "text" },
       (id) => db.documentSegment.findUnique({ where: { id } }),
       (row, data) => db.documentSegment.updateMany({ where: { id: row.id }, data }));
-    upgraded += await this.upgradeTable("Analysis", "id", { attentionScore: "json", warnings: "list", failureReason: "text" },
+    upgraded += await this.upgradeTable("Analysis", "id", { attentionScore: "json", warnings: "list", errors: "list", failureReason: "text" },
       (id) => db.analysis.findUnique({ where: { id } }),
       (row, data) => db.analysis.updateMany({ where: { id: row.id, updatedAt: row.updatedAt }, data: { ...data, updatedAt: row.updatedAt } }));
     upgraded += await this.upgradeTable("Finding", "id", { payload: "json" },
@@ -264,6 +267,30 @@ export class PrismaStore implements Store {
     return row ? this.user(row) : null;
   }
 
+  async setEmailVerified(userId: string, at: string): Promise<void> {
+    await this.client.user.updateMany({ where: { id: userId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date(at) } });
+  }
+
+  async setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void> {
+    await this.client.user.updateMany({ where: { id: userId }, data: { passwordHash, passwordChangedAt: new Date(changedAt) } });
+  }
+
+  async saveAuthToken(record: { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string }): Promise<void> {
+    await this.client.$transaction([
+      this.client.authToken.deleteMany({ where: { userId: record.userId, purpose: record.purpose, usedAt: null } }),
+      this.client.authToken.create({ data: { userId: record.userId, purpose: record.purpose, tokenHash: record.tokenHash, expiresAt: new Date(record.expiresAt) } }),
+    ]);
+  }
+
+  async consumeAuthToken(tokenHash: string, purpose: AuthTokenPurpose, at: string): Promise<{ userId: string } | null> {
+    const now = new Date(at);
+    // Conditional update: of two requests with the same token, exactly one sees count === 1.
+    const claimed = await this.client.authToken.updateMany({ where: { tokenHash, purpose, usedAt: null, expiresAt: { gt: now } }, data: { usedAt: now } });
+    if (claimed.count !== 1) return null;
+    const row = await this.client.authToken.findUnique({ where: { tokenHash }, select: { userId: true } });
+    return row ? { userId: row.userId } : null;
+  }
+
   async getMembership(userId: string, organizationId?: string): Promise<OrganizationMember | null> {
     const row = await this.client.organizationMember.findFirst({
       where: { userId, ...(organizationId ? { organizationId } : {}) },
@@ -296,6 +323,8 @@ export class PrismaStore implements Store {
         id: user.id,
         email: this.vault.open(user.email),
         name: this.vault.open(user.name),
+        emailVerifiedAt: user.emailVerifiedAt ? iso(user.emailVerifiedAt) : null,
+        passwordChangedAt: user.passwordChangedAt ? iso(user.passwordChangedAt) : null,
         createdAt: iso(user.createdAt),
         updatedAt: iso(user.updatedAt),
       },
@@ -547,6 +576,7 @@ export class PrismaStore implements Store {
         jurisdictionPackIds: analysis.jurisdictionPackIds,
         attentionScore: analysis.attentionScore ? this.sealJson(analysis.attentionScore) : Prisma.JsonNull,
         warnings: this.vault.sealList(analysis.warnings),
+        errors: this.vault.sealList(analysis.errors ?? []),
         failureReason: this.vault.sealOptional(analysis.failureReason),
         completedAt: analysis.completedAt ? new Date(analysis.completedAt) : null,
         documents: { create: analysis.documentIds.map((documentId) => ({ documentId })) },
@@ -593,6 +623,7 @@ export class PrismaStore implements Store {
         jurisdictionPackIds: analysis.jurisdictionPackIds,
         attentionScore: analysis.attentionScore ? this.sealJson(analysis.attentionScore) : Prisma.JsonNull,
         warnings: this.vault.sealList(analysis.warnings),
+        errors: this.vault.sealList(analysis.errors ?? []),
         failureReason: this.vault.sealOptional(analysis.failureReason),
         completedAt: analysis.completedAt ? new Date(analysis.completedAt) : null,
       },
@@ -992,6 +1023,7 @@ export class PrismaStore implements Store {
       jurisdictionPackIds: row.jurisdictionPackIds,
       attentionScore: row.attentionScore ? this.vault.openJson<AttentionScore>(row.attentionScore) : null,
       warnings: this.vault.openList(row.warnings),
+      errors: this.vault.openList(row.errors ?? []),
       failureReason: this.vault.openOptional(row.failureReason),
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),

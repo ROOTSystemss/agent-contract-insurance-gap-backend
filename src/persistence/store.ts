@@ -2,6 +2,7 @@ import type {
   AgentProfile,
   AgentProfileInput,
   Analysis,
+  AuthTokenPurpose,
   AttentionScore,
   AuditEvent,
   DocumentRecord,
@@ -41,6 +42,13 @@ export interface Store {
   }): Promise<RegistrationRecord>;
   findUserByEmail(email: string): Promise<User | null>;
   getUser(id: string): Promise<User | null>;
+  setEmailVerified(userId: string, at: string): Promise<void>;
+  setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void>;
+  // One-time account links. Only the SHA-256 of the token is stored. Saving a new token for a user and
+  // purpose retires that user's earlier unused tokens of the same purpose.
+  saveAuthToken(record: { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string }): Promise<void>;
+  // Marks the token used and returns its user, once: null when unknown, used already, expired or for another purpose.
+  consumeAuthToken(tokenHash: string, purpose: AuthTokenPurpose, now: string): Promise<{ userId: string } | null>;
   getMembership(userId: string, organizationId?: string): Promise<OrganizationMember | null>;
   getOrganization(id: string): Promise<Organization | null>;
   updateOrganization(id: string, name: string): Promise<Organization | null>;

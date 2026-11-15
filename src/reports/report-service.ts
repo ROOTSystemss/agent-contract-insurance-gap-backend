@@ -1,3 +1,4 @@
+import { unreviewableReason } from "../analysis/analysis-service.js";
 import type { Analysis, DocumentRecord, Finding } from "../domain/types.js";
 import type { Store } from "../persistence/store.js";
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
@@ -23,10 +24,15 @@ export class ReportService {
     const agent = await this.store.getAgent(organizationId, analysis.agentProfileId);
     if (!project || !agent) throw notFound("Analysis dependency");
     const documents: DocumentRecord[] = [];
+    // Documents that were reviewed by the run but have since been deleted: the report says so
+    // instead of silently dropping them from the list.
+    const removedSinceRun: string[] = [];
     for (const id of analysis.documentIds) {
       const document = await this.store.getDocument(organizationId, id);
       if (document) documents.push(document);
+      else if (!analysis.errors.some((error) => error.includes(id))) removedSinceRun.push(id);
     }
+    const reviewed = documents.filter((document) => unreviewableReason(document, document.id) === null);
     const result = await this.store.listFindings(organizationId, analysisId, {
       page: 1,
       pageSize: 100,
@@ -41,6 +47,12 @@ export class ReportService {
       .filter((finding) => finding.suggestedProfessionalReviewer === "insurance_broker_or_insurer")
       .flatMap((finding) => finding.recommendedReviewQuestions);
     return {
+      analysisId: analysis.id,
+      analysisState: analysis.state,
+      // Selected documents the analysis could not review. Non-empty means the findings cover only part
+      // of what was selected; the state is then completed_with_errors.
+      analysisErrors: analysis.errors,
+      selectedDocumentCount: analysis.documentIds.length,
       projectSummary: { id: project.id, name: project.name, description: project.description },
       agentSummary: {
         id: agent.id,
@@ -59,7 +71,7 @@ export class ReportService {
       )
         ? "universal_only"
         : "localized",
-      analyzedDocuments: documents.map((document) => ({
+      analyzedDocuments: reviewed.map((document) => ({
         id: document.id,
         filename: document.originalFilename,
         documentType: document.documentType,
@@ -67,7 +79,7 @@ export class ReportService {
         extractionStatus: document.extractionStatus,
         pageCount: document.pageCount,
       })),
-      extractionWarnings: documents.flatMap((document) => document.extractionWarnings),
+      extractionWarnings: reviewed.flatMap((document) => document.extractionWarnings),
       overallAttentionScore: analysis.attentionScore?.score ?? null,
       attentionLabel: analysis.attentionScore?.label ?? null,
       confidence: analysis.attentionScore?.confidence ?? null,
@@ -86,7 +98,11 @@ export class ReportService {
       questionsForLegalCounsel: [...new Set(questionsForCounsel)],
       questionsForInsuranceBrokerOrInsurer: [...new Set(questionsForInsurance)],
       limitations: [
-        ...new Set([...analysis.warnings, ...findings.flatMap((finding) => finding.limitations)]),
+        ...new Set([
+          ...removedSinceRun.map((id) => `A document reviewed by this analysis (id ${id}) has since been deleted, so its evidence excerpts can no longer be checked against the file.`),
+          ...analysis.warnings,
+          ...findings.flatMap((finding) => finding.limitations),
+        ]),
       ],
       disclaimer: CANONICAL_DISCLAIMER,
       analysisEngineVersion: analysis.engineVersion,
@@ -101,6 +117,10 @@ export class ReportService {
       (finding) => finding.severity === "high" || finding.severity === "critical",
     ).length;
     const score = analysis.attentionScore?.score ?? 0;
-    return `The deterministic review produced ${findings.length} finding${findings.length === 1 ? "" : "s"}, including ${high} requiring high or critical attention. The overall attention score is ${score}/100. This score prioritizes review and is not a legal-risk or coverage probability.`;
+    const unreviewed = analysis.errors.length;
+    const errorLead = unreviewed
+      ? `Completed with errors: ${unreviewed} of the ${analysis.documentIds.length} selected document${analysis.documentIds.length === 1 ? " was" : "s were"} not reviewed (see Analysis errors), so the findings cover only the documents that were read. `
+      : "";
+    return `${errorLead}The deterministic review produced ${findings.length} finding${findings.length === 1 ? "" : "s"}, including ${high} requiring high or critical attention. The overall attention score is ${score}/100. This score prioritizes review and is not a legal-risk or coverage probability.`;
   }
 }

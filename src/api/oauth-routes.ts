@@ -31,6 +31,8 @@ export const oauthRoutes: FastifyPluginAsync<{ config: AppConfig }> = async (app
       config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
     },
     async (request) => {
+      // The client links accounts by this email, so it is only asserted once the owner has proved it.
+      await app.accountSecurity.requireVerified(actor(request).userId);
       const input = oauthAuthorizeSchema.parse(request.body);
       if (input.clientId !== config.ATLAS_OAUTH_CLIENT_ID) {
         throw new AppError(400, "INVALID_CLIENT", "Unknown OAuth client.");
@@ -98,7 +100,7 @@ export const oauthRoutes: FastifyPluginAsync<{ config: AppConfig }> = async (app
         clientId: input.clientId,
       });
       return success(request, {
-        subject: { atlasUserId: user.id, email: user.email, name: user.name },
+        subject: { atlasUserId: user.id, email: user.email, emailVerified: Boolean(user.emailVerifiedAt), name: user.name },
         organization: {
           atlasOrganizationId: organization.id,
           atlasOrganizationName: organization.name,

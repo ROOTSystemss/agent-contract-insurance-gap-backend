@@ -38,6 +38,19 @@ const envSchema = z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
     TRUST_PROXY: booleanFromString,
+    // How many proxies sit in front of the app; the client address is the one this many hops back in
+    // X-Forwarded-For, so a forged header cannot change it. Render is 3 (Cloudflare edge, Render proxy,
+    // and the connection itself), measured live 2026-11-14 with the /health/ip diagnostic. Takes
+    // precedence over TRUST_PROXY.
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).optional(),
+    // Operator diagnostic GET /health/ip (shows a request its own forwarding headers). Off unless set (32+ characters).
+    IP_DIAGNOSTICS_TOKEN: z.string().min(32).optional(),
+    // "0" turns email verification off anywhere; "1" turns it on outside production (it is always on in production).
+    EMAIL_VERIFICATION: z.enum(["0", "1"]).optional(),
+    // Transactional email (verification and password reset) through Resend.
+    RESEND_API_KEY: z.string().min(1).optional(),
+    MAIL_FROM_ADDRESS: z.string().min(3).default("AI Agent Trust <onboarding@resend.dev>"),
+    MAIL_REPLY_TO: z.string().email().default("hello@rootsystems.app"),
     // Minimal single-client OAuth2-authorization-code IdP config for "Sign in with
     // Authority Atlas" on AI Compliance Readiness. Readiness is the only registered
     // client — no dynamic client registration — so a static shared secret configured
@@ -107,6 +120,14 @@ const envSchema = z
           path: ["ATLAS_OAUTH_CLIENT_SECRET"],
           message:
             "Production ATLAS_OAUTH_CLIENT_SECRET must be at least 32 characters and must not be a placeholder.",
+        });
+      }
+      if (env.TRUST_PROXY && env.TRUST_PROXY_HOPS === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["TRUST_PROXY_HOPS"],
+          message:
+            "TRUST_PROXY=true trusts a client-supplied X-Forwarded-For, so rate limits can be dodged. Set TRUST_PROXY_HOPS to the number of proxies in front of the app instead (3 on Render).",
         });
       }
       if (env.AUTHORITY_ATLAS_URL && !env.AUTHORITY_ATLAS_URL.startsWith("https://")) {

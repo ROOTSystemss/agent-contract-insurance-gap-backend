@@ -221,17 +221,19 @@ describe.skipIf(!databaseUrl)("PrismaStore customer field encryption (Postgres)"
     const agent = (await store.listAgents(organizationId, projectId))[0]!;
     const analysis: Analysis = {
       id: randomUUID(), organizationId, projectId, agentProfileId: agent.id, documentIds: [documentId],
-      state: "completed", engineVersion: "gap-engine@1.0.0", rulesetVersions: ["universal@1"], jurisdictionPackIds: ["global"],
+      state: "completed_with_errors", engineVersion: "gap-engine@1.0.0", rulesetVersions: ["universal@1"], jurisdictionPackIds: ["global"],
       attentionScore: { score: 70, label: "high_attention", confidence: 0.8, contributions: [{ dimension: "spend", points: 10, maximum: 20, explanation: "Acme agent can spend USD 5,000" }] },
-      warnings: ["Initech page 3 is scanned"], failureReason: "Initech annex missing",
+      warnings: ["Initech page 3 is scanned"], errors: ['"Initech annex.pdf" could not be read (text extraction failed), so it was not reviewed.'], failureReason: "Initech annex missing",
       createdAt: now, updatedAt: now, completedAt: now,
     };
     await store.createAnalysis(analysis);
     const rawAnalysis = await client.analysis.findUniqueOrThrow({ where: { id: analysis.id } });
     sealedJson(rawAnalysis.attentionScore);
     sealedText(rawAnalysis.warnings[0]);
+    sealedText(rawAnalysis.errors[0]);
     sealedText(rawAnalysis.failureReason);
-    expect(await store.getAnalysis(organizationId, analysis.id)).toMatchObject({ attentionScore: analysis.attentionScore, warnings: analysis.warnings, failureReason: analysis.failureReason });
+    expect(rawAnalysis.state).toBe("completed_with_errors");
+    expect(await store.getAnalysis(organizationId, analysis.id)).toMatchObject({ state: "completed_with_errors", attentionScore: analysis.attentionScore, warnings: analysis.warnings, errors: analysis.errors, failureReason: analysis.failureReason });
     await store.updateAnalysis({ ...analysis, failureReason: null, warnings: ["Updated Initech warning"] });
     sealedText((await client.analysis.findUniqueOrThrow({ where: { id: analysis.id } })).warnings[0]);
     expect((await store.listAnalyses(organizationId, projectId, { page: 1, pageSize: 10 })).items[0]?.warnings).toEqual(["Updated Initech warning"]);

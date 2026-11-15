@@ -37,8 +37,17 @@ const ledgerQuery = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(200),
 });
 
+// Console routes an account may use before confirming its email: they read only this workspace's own
+// data or handle its plan. Every other console route reaches Authority Atlas or Trust Proof (the first
+// such call creates the workspace's identities there) or produces signed evidence.
+const OPEN_BEFORE_VERIFICATION = new Set(["GET /status", "GET /coverage", "GET /billing", "POST /billing/claim", "POST /billing/checkout", "GET /team", "GET /receipts"]);
+
 export const consoleRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.authenticate);
+  app.addHook("preHandler", async (request) => {
+    const route = `${request.method} ${(request.routeOptions.url ?? "").replace(/^\/api\/v1\/console/, "")}`;
+    if (!OPEN_BEFORE_VERIFICATION.has(route)) await app.accountSecurity.requireVerified(actor(request).userId);
+  });
 
   async function workspace(request: FastifyRequest): Promise<Organization> {
     const organization = await app.store.getOrganization(actor(request).organizationId);

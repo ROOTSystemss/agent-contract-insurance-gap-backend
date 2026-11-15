@@ -4,6 +4,7 @@ import type {
   AgentProfileInput,
   Analysis,
   AuditEvent,
+  AuthTokenPurpose,
   DocumentRecord,
   Finding,
   FindingStatus,
@@ -56,6 +57,7 @@ export class MemoryStore implements Store {
   private billingEvents = new Set<string>();
   private consoleSigners = new Map<string, ConsoleSigner>();
   private receipts = new Map<string, EvidenceReceiptRecord>();
+  private authTokens = new Map<string, { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string; usedAt: string | null }>();
 
   async ready(): Promise<boolean> {
     return true;
@@ -82,6 +84,8 @@ export class MemoryStore implements Store {
       email: input.email.toLowerCase(),
       name: input.name,
       passwordHash: input.passwordHash,
+      emailVerifiedAt: null,
+      passwordChangedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -112,6 +116,28 @@ export class MemoryStore implements Store {
   async getUser(id: string): Promise<User | null> {
     const found = this.users.get(id);
     return found ? clone(found) : null;
+  }
+
+  async setEmailVerified(userId: string, at: string): Promise<void> {
+    const found = this.users.get(userId);
+    if (found && !found.emailVerifiedAt) this.users.set(userId, { ...found, emailVerifiedAt: at, updatedAt: now() });
+  }
+
+  async setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void> {
+    const found = this.users.get(userId);
+    if (found) this.users.set(userId, { ...found, passwordHash, passwordChangedAt: changedAt, updatedAt: now() });
+  }
+
+  async saveAuthToken(record: { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string }): Promise<void> {
+    for (const [hash, token] of this.authTokens) if (token.userId === record.userId && token.purpose === record.purpose && !token.usedAt) this.authTokens.delete(hash);
+    this.authTokens.set(record.tokenHash, { ...record, usedAt: null });
+  }
+
+  async consumeAuthToken(tokenHash: string, purpose: AuthTokenPurpose, at: string): Promise<{ userId: string } | null> {
+    const token = this.authTokens.get(tokenHash);
+    if (!token || token.purpose !== purpose || token.usedAt || token.expiresAt <= at) return null;
+    token.usedAt = at;
+    return { userId: token.userId };
   }
 
   async getMembership(userId: string, organizationId?: string): Promise<OrganizationMember | null> {
@@ -456,7 +482,7 @@ export class MemoryStore implements Store {
   async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
     if (await this.findUserByEmail(input.email)) throw new Error("EMAIL_EXISTS");
     const timestamp = now();
-    const user: User = { id: randomUUID(), email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash, createdAt: timestamp, updatedAt: timestamp };
+    const user: User = { id: randomUUID(), email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash, emailVerifiedAt: null, passwordChangedAt: null, createdAt: timestamp, updatedAt: timestamp };
     this.users.set(user.id, user);
     const membership: OrganizationMember = { id: randomUUID(), organizationId, userId: user.id, role: input.role, createdAt: timestamp };
     this.memberships.set(membership.id, membership);
@@ -508,6 +534,7 @@ export class MemoryStore implements Store {
   }
 
   async reset(): Promise<void> {
+    this.authTokens.clear();
     this.receipts.clear();
     this.consoleSigners.clear();
     this.consoleSubscriptions.clear();

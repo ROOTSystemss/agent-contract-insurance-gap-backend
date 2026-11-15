@@ -16,6 +16,9 @@ const assets = {
   "/rs-mark-cream.png": { file: "rs-mark-cream.png", type: "image/png" },
   "/oauth/authorize": { file: "authorize.html", type: "text/html; charset=utf-8" },
   "/authorize.js": { file: "authorize.js", type: "text/javascript; charset=utf-8" },
+  // Email verification, password reset and change (links in account emails land here).
+  "/account": { file: "account.html", type: "text/html; charset=utf-8" },
+  "/account.js": { file: "account.js", type: "text/javascript; charset=utf-8" },
   // Agent Governance console (Floor 3): one page app plus its self-hosted fonts and logo.
   "/console": { file: "console.html", type: "text/html; charset=utf-8" },
   "/console.js": { file: "console.js", type: "text/javascript; charset=utf-8" },
@@ -35,7 +38,7 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
       const file = await readFile(path.join(publicDirectory, asset.file));
       const contents = asset.type.startsWith("text/html") ? file.toString("utf8").replace(SOCIAL_LINKS_MARKER, socialLinksHtml()) : file;
       return reply
-        .header("Cache-Control", route === "/" || route === "/console" ? "no-cache" : "public, max-age=3600")
+        .header("Cache-Control", route === "/" || route === "/console" || route === "/account" ? "no-cache" : "public, max-age=3600")
         .type(asset.type)
         .send(contents);
     });

@@ -53,6 +53,9 @@ export const analysisStates = [
   "running",
   "completed",
   "completed_with_warnings",
+  // Finished, but at least one selected document was not reviewed (unreadable, or deleted before or
+  // during the run). The reasons are in Analysis.errors. Never reported as plain "completed".
+  "completed_with_errors",
   "failed",
 ] as const;
 export type AnalysisState = (typeof analysisStates)[number];
@@ -104,9 +107,15 @@ export interface User {
   email: string;
   name: string;
   passwordHash: string;
+  // When the owner proved they receive mail at `email` (a verification or password-reset link). null = not yet.
+  emailVerifiedAt: string | null;
+  // Last password change; access tokens issued before it are refused.
+  passwordChangedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export type AuthTokenPurpose = "verify_email" | "reset_password";
 
 export interface Organization {
   id: string;
@@ -376,6 +385,8 @@ export interface Analysis {
   jurisdictionPackIds: string[];
   attentionScore: AttentionScore | null;
   warnings: string[];
+  // One sentence per selected document that the run could not review, and why.
+  errors: string[];
   failureReason: string | null;
   createdAt: string;
   updatedAt: string;

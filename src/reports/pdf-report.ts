@@ -9,6 +9,7 @@ const colors = {
   orange: "#E97825",
   pale: "#FFF0E3",
   line: "#E6E4DD",
+  error: "#B42318",
 };
 
 function ensureRoom(document: PDFKit.PDFDocument, height = 100): void {
@@ -75,7 +76,23 @@ export async function generateReportPdf(report: GeneratedReport): Promise<Buffer
       .text(report.executiveSummary, 180, 226, { width: 350, lineGap: 2 });
 
     document.y = 300;
-    document.fillColor(colors.ink).font("Helvetica-Bold").fontSize(17).text("Priority findings");
+    if (report.analysisErrors.length) {
+      const selected = report.selectedDocumentCount;
+      document.fillColor(colors.error).font("Helvetica-Bold").fontSize(9).text("COMPLETED WITH ERRORS", 54, document.y, { characterSpacing: 1.2 });
+      document
+        .fillColor(colors.ink)
+        .font("Helvetica-Bold")
+        .fontSize(14)
+        .text(`Analysis errors: ${report.analysisErrors.length} of ${selected} selected document${selected === 1 ? " was" : "s were"} not reviewed`, { lineGap: 2 });
+      document.fillColor(colors.muted).font("Helvetica").fontSize(9);
+      for (const error of report.analysisErrors) {
+        ensureRoom(document, 40);
+        document.text(`•  ${error}`, { lineGap: 2 });
+      }
+      document.text("The findings below cover only the documents that were read.", { lineGap: 2 });
+      document.moveDown(1.2);
+    }
+    document.fillColor(colors.ink).font("Helvetica-Bold").fontSize(17).text("Priority findings", 54, document.y);
     document.moveDown(0.6);
     const findings = Object.values(report.findingsBySeverity).flat();
     for (const finding of findings) {
@@ -128,7 +145,7 @@ export async function generateReportPdf(report: GeneratedReport): Promise<Buffer
       .fontSize(9)
       .text(`Primary jurisdiction: ${report.jurisdictionSelection.primary}`)
       .text(`Jurisdiction support: ${report.jurisdictionSupportLevel.replaceAll("_", " ")}`)
-      .text(`Documents analyzed: ${report.analyzedDocuments.length}`)
+      .text(`Documents reviewed: ${report.analyzedDocuments.length} of ${report.selectedDocumentCount} selected`)
       .text(`Engine: ${report.analysisEngineVersion}`);
 
     ensureRoom(document, 100);
@@ -147,6 +164,9 @@ export async function generateReportPdf(report: GeneratedReport): Promise<Buffer
     const pageRange = document.bufferedPageRange();
     for (let index = pageRange.start; index < pageRange.start + pageRange.count; index += 1) {
       document.switchToPage(index);
+      // The footer sits below the bottom margin; without this pdfkit starts a new page for it, which
+      // left every report with blank trailing pages holding only the footers.
+      document.page.margins.bottom = 0;
       document
         .fillColor("#8A939E")
         .font("Helvetica")

@@ -77,6 +77,7 @@ function loginView() {
             <div class="field full"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" required minlength="${register ? 12 : 1}" placeholder="${register ? "At least 12 characters" : "Your password"}" /></div>
             <div class="field full"><button class="button button-primary button-block" type="submit">${register ? "Create workspace" : "Sign in"}<span>→</span></button><p id="auth-message" class="form-message"></p></div>
           </form>
+          ${register ? "" : '<p class="small"><a href="/account#forgot">Forgot your password?</a></p>'}
         </div>
       </section>
     </main>`;

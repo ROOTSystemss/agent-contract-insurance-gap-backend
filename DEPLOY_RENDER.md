@@ -15,7 +15,8 @@ Required environment variables (production refuses to start without them):
 | `ATLAS_OAUTH_CLIENT_SECRET` | 32+ random characters (same value configured on AI Compliance Readiness), no "secret"/"development"/"replace" |
 | `ATLAS_OAUTH_REDIRECT_URIS` | `https://ai-compliance-readiness.onrender.com/auth/atlas/callback` (https only) |
 | `CORS_ORIGINS` | the site origins allowed to call the API, comma-separated |
-| `TRUST_PROXY` | `true` |
+| `TRUST_PROXY_HOPS` | `3` — Render puts three hops in front of the app (Cloudflare edge, Render proxy, the connection), measured live 2026-11-14. The client address used for rate limits is the one three hops back, so a forged `X-Forwarded-For` cannot change it. Do not set `TRUST_PROXY=true` (production refuses it without this). |
+| `RESEND_API_KEY`, `MAIL_FROM_ADDRESS` | Resend key and a verified sender. They deliver the email-verification and password-reset links. Production requires email verification; set `EMAIL_VERIFICATION=0` only to switch it off deliberately (the startup log says so). Mail to reserved test domains (`.test`, `example.com` …) is never sent. |
 | `AUTHORITY_ATLAS_URL` | optional: the Authority Atlas base URL (https, no path), e.g. `https://authority-atlas.onrender.com`. Enables the certificate checks below; without it they answer 503. |
 | `PQ_SIGNING_SEED` | recommended: 32 random bytes, base64 (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`). The ML-DSA-65 (post-quantum, NIST FIPS 204) key that signs Assurance Packs; its public key is served at `/.well-known/rootsystems-signing-key.json`. Never change it once set. Without it packs are still built and fingerprinted but marked `not_configured`. |
 

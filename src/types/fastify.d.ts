@@ -7,6 +7,8 @@ import type { CertificateVerifier } from "../authority/certificate.js";
 import type { PqSigner } from "../crypto/pq-sign.js";
 import type { GovernanceGateway } from "../governance/gateway.js";
 import type { ConsoleBilling } from "../governance/billing.js";
+import type { AccountSecurity } from "../security/account-security.js";
+import type { LoginAttempts, knownDevices } from "../security/login-attempts.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -20,6 +22,9 @@ declare module "fastify" {
     // Agent Governance console: links to Authority Atlas and Trust Proof
     governance: GovernanceGateway;
     billing: ConsoleBilling;
+    accountSecurity: AccountSecurity;
+    loginAttempts: LoginAttempts;
+    knownDevices: ReturnType<typeof knownDevices>;
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {

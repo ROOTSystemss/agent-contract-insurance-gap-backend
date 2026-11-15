@@ -6,6 +6,7 @@ import { buildAssurancePack, verifyAssurancePack } from "../reports/assurance-pa
 import { reconcile, requireVerifiedCertificate } from "../authority/certificate.js";
 import type { DocumentRecord, Finding } from "../domain/types.js";
 import { generateReportPdf } from "../reports/pdf-report.js";
+import { publishedKeys } from "../crypto/key-history.js";
 import { recordReceipt } from "../evidence/receipts.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { actor, audit, paginatedMeta, pagination, requireRole, success } from "./helpers.js";
@@ -91,6 +92,8 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
   // certificate allows (the certificate is verified live with Authority Atlas first).
   app.post("/:id/assurance-pack", async (request) => {
     requireRole(request, "analyst");
+    // A pack is signed by RootSystems and handed to third parties: only from a confirmed address.
+    await app.accountSecurity.requireVerified(actor(request).userId);
     const { id } = analysisParams.parse(request.params);
     const { certificate } = z
       .object({ certificate: z.string().min(20).max(8000).optional() })
@@ -99,6 +102,15 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
     const analysis = await app.store.getAnalysis(orgId, id);
     if (!analysis) throw notFound("Analysis");
     // A finished analysis may carry warnings; they are included in the pack rather than blocking it.
+    // One that skipped documents may not: a signed pack would present a partial review as complete.
+    if (analysis.state === "completed_with_errors") {
+      throw new AppError(
+        409,
+        "ANALYSIS_HAS_ERRORS",
+        "Some selected documents were not reviewed (see the analysis errors). Remove or replace them and run the analysis again before building an Assurance Pack.",
+        analysis.errors.map((message) => ({ path: "analysis.errors", message })),
+      );
+    }
     if (analysis.state !== "completed" && analysis.state !== "completed_with_warnings") {
       throw new AppError(409, "ANALYSIS_NOT_COMPLETED", "The analysis must be completed before an assurance pack can be built.");
     }
@@ -156,7 +168,7 @@ export const analysisRoutes: FastifyPluginAsync = async (app) => {
         signature: z.object({ value: z.string().min(1).max(8000), publicKey: z.string().max(4000).optional() }).passthrough().optional(),
       })
       .parse(request.body);
-    return success(request, verifyAssurancePack(body.pack, body.contentHash, body.signature, app.pqSigner));
+    return success(request, verifyAssurancePack(body.pack, body.contentHash, body.signature, app.pqSigner, publishedKeys(app.pqSigner, process.env.PQ_KEY_HISTORY_JSON)));
   });
 
   app.get("/:id/report.pdf", async (request, reply) => {

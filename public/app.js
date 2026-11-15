@@ -206,6 +206,7 @@ function authView() {
             <div class="field full"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" required minlength="${register ? 12 : 1}" placeholder="${register ? "At least 12 characters" : "Your password"}" /></div>
             <div class="field full"><button class="button button-primary button-block" type="submit">${register ? "Create secure workspace" : "Sign in"}<span>→</span></button><p id="auth-message" class="form-message"></p></div>
           </form>
+          ${register ? "" : '<p class="small"><a href="/account#forgot">Forgot your password?</a></p>'}
           <p class="small muted">Your documents stay private to this workspace and are encrypted at rest.</p>
         </div>
       </section>
@@ -234,7 +235,13 @@ async function submitAuth(event) {
     state.token = data.accessToken;
     sessionStorage.setItem("authorityAtlasToken", state.token);
     await initialize();
-    toast(state.authMode === "register" ? "Workspace created." : "Signed in successfully.");
+    toast(
+      state.authMode === "register"
+        ? data.verificationRequired && !data.emailVerified
+          ? "Workspace created. We emailed you a link to confirm your address."
+          : "Workspace created."
+        : "Signed in successfully.",
+    );
   } catch (error) {
     message.textContent = error.message;
   } finally {
@@ -264,13 +271,28 @@ function shell(content) {
     </aside>
     <section class="main">
       <header class="topbar"><div class="breadcrumb"><span>${escapeHtml(org.name || "Workspace")}</span><span class="slash">/</span><strong>${escapeHtml(state.project?.name || "All projects")}</strong></div><button class="button button-secondary session-signout" data-logout aria-label="Sign out">Sign out</button></header>
-      <div class="content">${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Agent Trust · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
+      <div class="content">${verifyBanner()}${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Agent Trust · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
     </section>
   </div>`;
   bindShell();
 }
 
+// Shown until the account's email is confirmed (only where verification is required).
+function verifyBanner() {
+  if (!state.me || state.me.emailVerified !== false || !state.me.verificationRequired) return "";
+  return `<div class="card card-pad" role="status" style="margin-bottom:16px;border:1px solid #e97825"><strong>Confirm your email address.</strong> We sent a link to ${escapeHtml(state.me.user?.email || "your address")}. Until you open it, certificates, approvals and signed Assurance Packs stay locked. <button class="button button-secondary" data-resend-verification style="margin-left:8px">Send a new link</button></div>`;
+}
+
 function bindShell() {
+  document.querySelector("[data-resend-verification]")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      const result = await api("/auth/resend-verification", { method: "POST" });
+      toast(result.emailVerified ? "Your email is already confirmed." : result.sent ? "A new link is on its way. Check your inbox." : "The email could not be sent right now. Try again later.", result.sent || result.emailVerified ? undefined : "error");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
   document.querySelector("[data-governance-export]")?.addEventListener("click", async () => {
     try {
       const summary = await api("/governance/export");
@@ -918,6 +940,7 @@ function decisionSummaryText(report) {
     `Agent: ${report.agentSummary.name}`,
     `Attention score: ${report.overallAttentionScore ?? "n/a"}/100`,
     `Findings: ${counts.map(([severity, n]) => `${n} ${severity}`).join(", ") || "none"}`,
+    ...((report.analysisErrors || []).length ? [`Completed with errors: ${report.analysisErrors.length} selected document(s) were not reviewed, so these findings are partial.`] : []),
     `Generated: ${new Date().toISOString()}`,
     "Decision (accept the risk / require an insurance update / restrict the agent's authority): ________",
     "Decided by: ________",
@@ -930,11 +953,18 @@ function signoffCard(report) {
   return `<div class="card f3-signoff" id="named-signoff" style="margin-top:18px"><span class="badge badge-green">Named Sign-off</span><h2>Sign the decision</h2><p>${needsDecision ? `${needsDecision} finding${needsDecision === 1 ? "" : "s"} at moderate severity or above${worst ? ` (highest: ${pretty(worst)})` : ""} need a named owner's call: accept the risk, require an insurance update, or restrict the agent's authority.` : "No moderate-or-higher findings need a decision right now."}</p><p class="small muted">Ask the owners who decide: each one signs with their own key in Approvals, and the signed decision records who made the call and when, in a way anyone can verify independently. You cannot sign your own request.</p><div class="form-actions"><button class="button button-primary" data-request-signoff>Ask a named owner to sign →</button><button class="button button-secondary" data-copy-decision>Copy decision summary</button></div></div>`;
 }
 
+function analysisErrorsCard(report) {
+  const errors = report.analysisErrors || [];
+  if (!errors.length) return "";
+  const selected = report.selectedDocumentCount ?? errors.length;
+  return `<div class="card card-pad" role="alert" style="margin-bottom:18px;border:1px solid #b42318"><span class="badge badge-red">Completed with errors</span><h2 style="margin:10px 0 6px">${errors.length} of ${selected} selected document${selected === 1 ? " was" : "s were"} not reviewed</h2><ul>${errors.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}</ul><p class="small muted">The findings below cover only the documents that were read. Replace or remove these documents and rerun the analysis before relying on it or building an Assurance Pack.</p></div>`;
+}
+
 function reportView(report) {
   const findings = Object.values(report.findingsBySeverity || {}).flat();
-  return `<div class="card card-pad"><div class="score-layout"><div class="score-ring" style="--score:${report.overallAttentionScore || 0}"><div class="score-center"><strong>${report.overallAttentionScore ?? "—"}</strong><span>ATTENTION / 100</span></div></div><div><span class="badge ${report.overallAttentionScore >= 70 ? "badge-red" : report.overallAttentionScore >= 40 ? "badge-orange" : "badge-green"}">${pretty(report.attentionLabel || "not scored")}</span><h2 style="font-family:Georgia,serif;font-size:1.8rem;font-weight:500;margin:12px 0 7px">${findings.length} review item${findings.length === 1 ? "" : "s"} identified</h2><p class="muted" style="line-height:1.6">${escapeHtml(report.executiveSummary)}</p></div></div></div>
+  return `${analysisErrorsCard(report)}<div class="card card-pad"><div class="score-layout"><div class="score-ring" style="--score:${report.overallAttentionScore || 0}"><div class="score-center"><strong>${report.overallAttentionScore ?? "—"}</strong><span>ATTENTION / 100</span></div></div><div><span class="badge ${report.overallAttentionScore >= 70 ? "badge-red" : report.overallAttentionScore >= 40 ? "badge-orange" : "badge-green"}">${pretty(report.attentionLabel || "not scored")}</span><h2 style="font-family:Georgia,serif;font-size:1.8rem;font-weight:500;margin:12px 0 7px">${findings.length} review item${findings.length === 1 ? "" : "s"} identified</h2><p class="muted" style="line-height:1.6">${escapeHtml(report.executiveSummary)}</p></div></div></div>
     <div class="report-grid"><div class="card"><div class="section-head"><div><h2>Priority findings</h2><p>Ordered by severity for efficient expert review.</p></div></div><div class="finding-list">${findings.length ? findings.map(findingCard).join("") : '<p class="muted">No findings were generated.</p>'}</div></div>
-      <aside><div class="card"><h2>Review context</h2><p><strong>${escapeHtml(report.agentSummary.name)}</strong><br/>${escapeHtml(report.agentSummary.businessPurpose)}</p><p>${report.analyzedDocuments.length} analyzed document${report.analyzedDocuments.length === 1 ? "" : "s"}<br/>Support: ${pretty(report.jurisdictionSupportLevel)}</p></div><div class="card" style="margin-top:18px"><h2>Questions for counsel</h2>${
+      <aside><div class="card"><h2>Review context</h2><p><strong>${escapeHtml(report.agentSummary.name)}</strong><br/>${escapeHtml(report.agentSummary.businessPurpose)}</p><p>${report.analyzedDocuments.length} of ${report.selectedDocumentCount ?? report.analyzedDocuments.length} selected document${(report.selectedDocumentCount ?? report.analyzedDocuments.length) === 1 ? "" : "s"} reviewed<br/>Support: ${pretty(report.jurisdictionSupportLevel)}</p></div><div class="card" style="margin-top:18px"><h2>Questions for counsel</h2>${
         report.questionsForLegalCounsel.length
           ? `<ul>${report.questionsForLegalCounsel
               .slice(0, 5)
@@ -948,7 +978,7 @@ function reportView(report) {
               .map((question) => `<li>${escapeHtml(question)}</li>`)
               .join("")}</ul>`
           : "<p>No insurance-specific questions generated.</p>"
-      }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div>${signoffCard(report)}</aside></div>
+      }</div><div class="card" style="margin-top:18px"><h2>Analysis history</h2><div class="history-list">${state.analyses.map((analysis) => `<div><span><strong>${pretty(analysis.state)}</strong><small>${new Date(analysis.createdAt).toLocaleString()}</small></span><span class="badge ${analysis.state === "completed_with_errors" ? "badge-red" : analysis.state.startsWith("completed") ? "badge-green" : "badge-gray"}">${analysis.attentionScore?.score ?? "—"}/100</span></div>`).join("")}</div></div>${signoffCard(report)}</aside></div>
     <section id="assurance-pack" class="card authority-card" aria-label="Assurance Pack"></section>
     <div class="disclaimer">${escapeHtml(report.disclaimer)}</div>`;
 }
@@ -1012,14 +1042,15 @@ async function runAnalysis() {
           documentIds: state.documents.map((document) => document.id),
         }),
       });
-    await api(
+    const result = await api(
       `/analyses/${analysis.id}/${analysis.state.startsWith("completed") ? "rerun" : "run"}`,
       { method: "POST" },
     );
     state.analyses = await api(`/projects/${state.project.id}/analyses?pageSize=100`);
     state.analyses.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     state.report = await api(`/analyses/${analysis.id}/report`);
-    toast("Analysis complete.");
+    if (result?.analysis?.state === "completed_with_errors") toast("Analysis completed with errors: some documents were not reviewed.", "error");
+    else toast("Analysis complete.");
     renderAnalysis();
   } catch (error) {
     toast(error.message, "error");

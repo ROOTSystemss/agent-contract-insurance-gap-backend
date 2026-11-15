@@ -1,11 +1,28 @@
 import { randomUUID } from "node:crypto";
-import type { Analysis, Finding, PaginationInput } from "../domain/types.js";
+import type { Analysis, DocumentRecord, Finding, PaginationInput } from "../domain/types.js";
 import { selectJurisdictionPacks } from "../jurisdictions/packs.js";
 import type { Store } from "../persistence/store.js";
 import { AppError, notFound } from "../shared/errors.js";
 import { detectClauses } from "./clause-detector.js";
 import { analyzeGaps, ENGINE_VERSION, UNIVERSAL_RULE_VERSION } from "./gap-engine.js";
 import { calculateAttentionScore } from "./scoring.js";
+
+// Why a selected document cannot be reviewed, or null when its text was read. A document with little
+// text ("completed_with_warnings") is still reviewed; its warning travels with the analysis.
+export function unreviewableReason(document: DocumentRecord | null, documentId: string): string | null {
+  if (!document) return `A selected document (id ${documentId}) was deleted before the analysis ran, so it was not reviewed.`;
+  const name = `"${document.originalFilename}"`;
+  switch (document.extractionStatus) {
+    case "failed":
+      return `${name} could not be read (text extraction failed${document.extractionError ? `: ${document.extractionError}` : ""}), so it was not reviewed.`;
+    case "ocr_required":
+      return `${name} has no readable text (it looks like a scanned PDF and needs OCR), so it was not reviewed.`;
+    case "pending":
+      return `${name} had not been read yet when the analysis ran, so it was not reviewed.`;
+    default:
+      return null;
+  }
+}
 
 export class AnalysisService {
   constructor(private readonly store: Store) {}
@@ -37,6 +54,7 @@ export class AnalysisService {
       jurisdictionPackIds: [],
       attentionScore: null,
       warnings: [],
+      errors: [],
       failureReason: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -57,14 +75,20 @@ export class AnalysisService {
         "AGENT_PROFILE_MISSING",
         "The selected agent profile no longer exists.",
       );
-    const documents = [];
+    // Only documents whose text was actually read are reviewed. Every other selected document is named
+    // in `errors` and the analysis finishes as completed_with_errors, never as plain "completed".
+    const documents: DocumentRecord[] = [];
+    const errors: string[] = [];
     for (const documentId of analysis.documentIds) {
       const document = await this.store.getDocument(organizationId, documentId);
-      if (document) documents.push(document);
+      const problem = unreviewableReason(document, documentId);
+      if (problem) errors.push(problem);
+      else documents.push(document!);
     }
     const started: Analysis = {
       ...analysis,
       state: "running",
+      errors: [],
       updatedAt: new Date().toISOString(),
       failureReason: null,
     };
@@ -92,13 +116,20 @@ export class AnalysisService {
       });
       const extractionWarnings = documents.flatMap((document) => document.extractionWarnings);
       const warnings = [...packSelection.warnings, ...extractionWarnings];
+      // A document removed while the run was in progress: its findings were computed, but it is gone now.
+      for (const document of documents) {
+        if (!(await this.store.getDocument(organizationId, document.id))) {
+          errors.push(`"${document.originalFilename}" (id ${document.id}) was deleted while the analysis was running. Findings that cite it can no longer be traced to the document.`);
+        }
+      }
       const completedAt = new Date().toISOString();
       const completed: Analysis = {
         ...started,
-        state: warnings.length ? "completed_with_warnings" : "completed",
+        state: errors.length ? "completed_with_errors" : warnings.length ? "completed_with_warnings" : "completed",
         jurisdictionPackIds: packSelection.packs.map((pack) => pack.id),
         attentionScore: score,
         warnings,
+        errors,
         updatedAt: completedAt,
         completedAt,
       };

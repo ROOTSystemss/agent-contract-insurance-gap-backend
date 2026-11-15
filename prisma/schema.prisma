@@ -22,6 +22,7 @@ enum AnalysisState {
   running
   completed
   completed_with_warnings
+  completed_with_errors
   failed
 }
 
@@ -55,11 +56,30 @@ model User {
   emailHash    String?              @unique
   name         String
   passwordHash String
+  // When the owner proved they receive mail at this address; null = not yet (src/security/account-security.ts).
+  emailVerifiedAt   DateTime?
+  // Access tokens issued before this moment are refused.
+  passwordChangedAt DateTime?
   memberships  OrganizationMember[]
   uploadedDocs Document[]           @relation("DocumentUploader")
   auditEvents  AuditEvent[]         @relation("AuditActor")
+  authTokens   AuthToken[]
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
+}
+
+// One-time links for email verification and password reset. Only the SHA-256 of the token is stored.
+model AuthToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, purpose])
 }
 
 model Organization {
@@ -197,6 +217,8 @@ model Analysis {
   jurisdictionPackIds String[]
   attentionScore      Json?
   warnings            String[]
+  // Selected documents the run could not review (stored encrypted, like warnings).
+  errors              String[]           @default([])
   failureReason       String?
   documents           AnalysisDocument[]
   findings            Finding[]

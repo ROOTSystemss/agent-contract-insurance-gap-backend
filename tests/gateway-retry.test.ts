@@ -50,7 +50,7 @@ describe("gateway wake-up retry (D1)", () => {
 
   it("a service that stays busy past the budget ends in a clear RATE_LIMITED error naming it", async () => {
     const { gw, sleeps } = gateway((url) => (url === ATLAS + "/register" ? json(201, {}) : json(429, { error: "rate_limited" })), 20_000);
-    await expect(gw.ensureLink(org)).rejects.toMatchObject({ statusCode: 429, code: "RATE_LIMITED", message: expect.stringContaining("Trust Proof is busy") });
+    await expect(gw.ensureLink(org)).rejects.toMatchObject({ statusCode: 429, code: "RATE_LIMITED", message: expect.stringContaining("Trust Proof is busy") as unknown as string });
     expect(sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(20_000);
   });
 

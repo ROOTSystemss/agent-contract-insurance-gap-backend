@@ -195,6 +195,7 @@
         state.token = res.accessToken;
         sessionStorage.setItem(TOKEN_KEY, state.token);
         location.hash = "#/overview";
+        if (mode !== "signin" && res.verificationRequired && !res.emailVerified) toast("Workspace created. We emailed you a link to confirm your address.");
         boot();
       }).catch(function (err) {
         btn.disabled = false;
@@ -239,7 +240,25 @@
             h("button", { class: "btn btn--primary btn--lg", type: "submit" }, mode === "signin" ? "Sign in" : "Create workspace", icon("arrow"))),
           h("div", { class: "auth__switch" },
             mode === "signin" ? "New to RootSystems? " : "Already have a workspace? ",
-            h("button", { type: "button", onclick: function () { renderAuth(mode === "signin" ? "signup" : "signin"); }, text: mode === "signin" ? "Create a workspace" : "Sign in" }))))));
+            h("button", { type: "button", onclick: function () { renderAuth(mode === "signin" ? "signup" : "signin"); }, text: mode === "signin" ? "Create a workspace" : "Sign in" })),
+          mode === "signin" ? h("div", { class: "auth__switch" }, h("a", { href: "/account#forgot", text: "Forgot your password?" })) : null))));
+  }
+
+  // Shown until the account's email is confirmed (only where verification is required).
+  function verifyBanner() {
+    var me = state.me || {};
+    if (me.emailVerified !== false || !me.verificationRequired) return null;
+    var resend = h("button", { class: "btn btn--sm", type: "button" }, "Send a new link");
+    resend.addEventListener("click", function () {
+      resend.disabled = true;
+      api("/auth/resend-verification", { method: "POST", body: {} }).then(function (r) {
+        toast(r.emailVerified ? "Your email is already confirmed." : r.sent ? "A new link is on its way. Check your inbox." : "The email could not be sent right now. Try again later.", !(r.sent || r.emailVerified));
+      }).catch(function (err) { toast(err.message, true); });
+    });
+    return h("div", { class: "panel", role: "status", style: "margin:16px 24px 0;padding:14px 18px;border-color:#e97825;display:flex;gap:12px;align-items:center;flex-wrap:wrap" },
+      icon("alert"),
+      h("span", null, h("strong", { text: "Confirm your email address. " }), "We sent a link to " + ((me.user && me.user.email) || "your address") + ". Until you open it, certificates, approvals and signed packs stay locked."),
+      resend);
   }
   function field(label, input, hint) {
     var id = "f-" + Math.random().toString(36).slice(2, 8);
@@ -283,6 +302,7 @@
         h("div", { class: "topbar__title" }, h("small", { text: org }), h("strong", { text: TITLES[state.route] || "" })),
         h("button", { class: "kbar", type: "button", onclick: openPalette, "aria-label": "Open command palette" }, icon("search"), h("span", { text: "Jump to or do anything…" }), h("kbd", { text: "Ctrl K" })),
         state.status && state.status.linked ? h("button", { class: "btn btn--primary", onclick: function () { openIssueDrawer(); }, "aria-label": "Issue certificate" }, icon("plus"), h("span", { class: "btn__label", text: "Issue certificate" })) : null),
+      verifyBanner(),
       content));
     clear(app).appendChild(shell);
     return content;
@@ -947,7 +967,8 @@
           var done = a.state === "completed" || a.state === "completed_with_warnings";
           var at = a.attention ? ATTENTION[a.attention.label] : null;
           var pack = done ? h("button", { class: "btn btn--sm" }, icon("download"), "Signed Assurance Pack") : null;
-          if (pack) pack.addEventListener("click", function () {
+          if (a.state === "completed_with_errors") pack = h("a", { class: "btn btn--sm", href: "/", title: "Some selected documents were not reviewed. Fix them and rerun to build a pack." }, icon("alert"), "Not all documents reviewed");
+          if (pack && done) pack.addEventListener("click", function () {
             pack.disabled = true;
             api("/analyses/" + a.id + "/assurance-pack", { method: "POST", body: {} }).then(function (res) {
               pack.disabled = false;
@@ -1035,6 +1056,7 @@
         h("div", { class: "panel__body", style: "display:flex;gap:10px;flex-wrap:wrap" },
           h("a", { class: "btn", href: "https://rootsystems.app/dpa", target: "_blank", rel: "noopener" }, "Data Processing Agreement"),
           h("a", { class: "btn", href: "https://rootsystems.app/privacy", target: "_blank", rel: "noopener" }, "Privacy"),
+          h("a", { class: "btn", href: "/account#change" }, icon("lock"), "Change password"),
           h("button", { class: "btn btn--ghost", onclick: function () { signOut(false); } }, icon("logout"), "Sign out")))));
   }
 

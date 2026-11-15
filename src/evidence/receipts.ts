@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { EvidenceReceiptRecord } from "../domain/types.js";
 import type { Store } from "../persistence/store.js";
 import { PQ_ALGORITHM, PQ_STANDARD, sha512Hex, type PqSigner } from "../crypto/pq-sign.js";
+import { keyCoversTime } from "../crypto/key-history.js";
 import { canonicalJson } from "../reports/assurance-pack.js";
 
 // Evidence Notary receipts for AI Agent Trust: every assurance pack, certificate issued or revoked and
@@ -99,8 +100,9 @@ export function checkChain(orgId: string, receipts: Doc[]): { intact: true; rece
   return { intact: true, receipts: receipts.length, head: previous };
 }
 
-// One receipt against this service's published keys: who issued it and that it is unchanged.
-export interface PublishedKey { keyId: string; publicKey: string }
+// One receipt against this service's published keys: who issued it and that it is unchanged. A retired
+// key only counts for receipts it issued (signed issuedAt) up to its validUntil.
+export interface PublishedKey { keyId: string; publicKey: string; status?: "active" | "retired"; validUntil?: string | null }
 export function verifyOne(receipt: unknown, keys: PublishedKey[], verify: (bytes: Uint8Array, sig: string, publicKey: string) => boolean):
   { valid: true; keyId: string; type: unknown; seq: unknown; issuedAt: unknown; subject: unknown; facts: unknown; anchorHash: string } | { valid: false; reason: string } {
   if (!receipt || typeof receipt !== "object") return { valid: false, reason: "This is not an AI Agent Trust receipt." };
@@ -114,6 +116,9 @@ export function verifyOne(receipt: unknown, keys: PublishedKey[], verify: (bytes
   const text = signedText(r);
   if (sha512(text) !== sig.sha512) return { valid: false, reason: "The receipt was changed after it was issued." };
   if (!sig.value || !verify(Buffer.from(text, "utf8"), sig.value, key.publicKey)) return { valid: false, reason: "The signature does not match the receipt." };
+  if (key.status === "retired" && !keyCoversTime({ keyId: key.keyId, publicKey: key.publicKey, status: "retired", validUntil: key.validUntil ?? null }, r.issuedAt)) {
+    return { valid: false, reason: "The receipt was signed with a retired AI Agent Trust key after that key was retired." };
+  }
   return { valid: true, keyId: key.keyId, type: r.type, seq: r.seq, issuedAt: r.issuedAt, subject: r.subject, facts: r.facts, anchorHash: sha256(text) };
 }
 
