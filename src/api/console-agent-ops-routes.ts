@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, FastifyRequest } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import type { Organization } from "../domain/types.js";
@@ -36,8 +36,107 @@ const checkBody = z
   .object({ agentId: agentIdSchema, action: actionSchema, resource: z.string().trim().max(200).default(""), amountUsd: z.number().nonnegative().max(1e12).optional() })
   .strict();
 
+export const gateCheckBody = checkBody;
+export type GateCheckInput = z.infer<typeof checkBody>;
+
 const DEFAULT_POLICY: GatePolicy = { defaultImpact: "medium", rules: [] };
 export const APPROVAL_TTL_MS = 24 * 3600 * 1000;
+
+// BM-41 approval request as stored, and its effective state (expired never counts as approved). Exported so the
+// runtime gate (BM-40, runtime-gate-routes.ts) answers exactly what the console inbox shows.
+export type ApprovalRequest = {
+  requestId: string; agentId: string; action: string; resource: string; amountUsd: number | null; impact: string; reasons: string[];
+  requestedBy: string; requestedAt: string; expiresAt: string; status: "pending" | "approved" | "declined";
+  decidedBy?: string; decidedByName?: string; decidedAt?: string; noteSha256?: string; receiptSeq?: number | null;
+};
+export const approvalState = (r: ApprovalRequest, now = Date.now()): ApprovalRequest["status"] | "expired" =>
+  r.status === "pending" && Date.parse(r.expiresAt) <= now ? "expired" : r.status;
+export const approvalView = (r: ApprovalRequest) => ({ ...r, state: approvalState(r) });
+
+// Certificates, or why they could not be read: "not-activated" and "not-verified" are never treated as "none".
+export async function gateCertificates(app: FastifyInstance, organization: Organization): Promise<{ source: "authority-atlas" | "not-activated" | "not-verified"; certificates: AtlasCertificate[] }> {
+  if (!app.governance.status().atlas || !(await app.store.getServiceLink(organization.id))) return { source: "not-activated", certificates: [] };
+  try {
+    return { source: "authority-atlas", certificates: await app.governance.listCertificates(organization) };
+  } catch (error) {
+    app.log.warn({ err: (error as Error).message }, "gates: Agent Certificates could not be read");
+    return { source: "not-verified", certificates: [] };
+  }
+}
+
+export async function gatePolicyOf(app: FastifyInstance, organizationId: string): Promise<GatePolicy> {
+  const saved = await app.store.getConsoleRecord(organizationId, "settings", "gates");
+  return saved ? gatePolicySchema.parse(saved.data) : DEFAULT_POLICY;
+}
+
+// One gate decision (AD-057), shared by the console route (signed-in people) and the runtime gate (BM-40, runtime keys).
+// requestedBy is a user id or "runtime-key:<id>"; nobody can approve their own request (BM-41).
+export async function evaluateGate(
+  app: FastifyInstance,
+  organization: Organization,
+  input: GateCheckInput,
+  requestedBy: string,
+  log: FastifyBaseLogger,
+): Promise<{ status: 200 | 202 | 403; body: { decision: "allowed" | "blocked" | "needs-approval"; impact: string; reasons: string[]; requestId: string | null; certificateSource: string; receiptSeq: number | null } }> {
+  const policy = await gatePolicyOf(app, organization.id);
+  const { impact, rule } = impactFor(policy, input);
+  const { source, certificates } = await gateCertificates(app, organization);
+  const reasons: string[] = [];
+  let decision: "allowed" | "blocked" | "needs-approval";
+  const active = certificates.filter((c) => c.agentId === input.agentId && c.status === "active");
+  if (source !== "authority-atlas") {
+    decision = "needs-approval";
+    reasons.push(source === "not-activated" ? "Certificates are not read yet (console not activated): not verified, so a person must approve." : "Agent Certificates could not be read: not verified, so a person must approve.");
+  } else if (!active.length) {
+    decision = "blocked";
+    reasons.push("The agent has no active certificate.");
+  } else {
+    const permissionLists = active.map((c) => c.permissions);
+    const unknownPermissions = permissionLists.every((p) => p === null);
+    const permitted = permissionLists.some((p) => Array.isArray(p) && p.some((granted) => patternMatches(granted, input.action)));
+    const limits = active.map((c) => c.limits?.maxAmountUsd).filter((v): v is number => typeof v === "number");
+    const overLimit = input.amountUsd !== undefined && limits.length > 0 && input.amountUsd > Math.max(...limits);
+    if (!unknownPermissions && !permitted) {
+      decision = "blocked";
+      reasons.push(`"${input.action}" is outside the agent's certificate permissions.`);
+    } else if (overLimit) {
+      decision = "blocked";
+      reasons.push(`The amount is above the certificate's limit of ${Math.max(...limits)} USD.`);
+    } else if (unknownPermissions) {
+      decision = "needs-approval";
+      reasons.push("The certificate lists no permissions, so whether this action is allowed is not verified: a person must approve.");
+    } else if (impact === "high") {
+      decision = "needs-approval";
+      reasons.push(rule !== null ? `Rule ${rule + 1} makes this a high-impact action.` : "The default impact is high.");
+    } else {
+      decision = "allowed";
+      reasons.push(`Within the certificate's permissions and limits; ${impact} impact.`);
+    }
+  }
+  const id = randomUUID();
+  const at = new Date().toISOString();
+  let requestId: string | null = null;
+  if (decision === "needs-approval") {
+    requestId = randomUUID();
+    await app.store.saveConsoleRecord({
+      organizationId: organization.id, kind: "approval-request", key: requestId,
+      data: { requestId, agentId: input.agentId, action: input.action, resource: input.resource, amountUsd: input.amountUsd ?? null, impact, reasons, requestedBy, requestedAt: at, expiresAt: new Date(Date.parse(at) + APPROVAL_TTL_MS).toISOString(), status: "pending" },
+    });
+  }
+  await app.store.saveConsoleRecord({
+    organizationId: organization.id, kind: "gate", key: `${at}:${id}`,
+    data: { id, at, agentId: input.agentId, action: input.action, resourceSha256: input.resource ? sha256Hex(input.resource) : null, amountUsd: input.amountUsd ?? null, impact, decision, reasons, certificateSource: source, requestId, by: requestedBy },
+  });
+  let receiptSeq: number | null = null;
+  if (decision !== "allowed") {
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "gate-decision", subject: { kind: "agent", id: input.agentId },
+      facts: { decision, impact, action: input.action, amountUsd: input.amountUsd ?? null, certificateSource: source, requestId, reasonsSha256: sha256Hex(reasons.join("\n")), at },
+    }, log);
+    receiptSeq = receipt?.seq ?? null;
+  }
+  return { status: decision === "blocked" ? 403 : decision === "needs-approval" ? 202 : 200, body: { decision, impact, reasons, requestId, certificateSource: source, receiptSeq } };
+}
 
 export const patternMatches = (pattern: string, action: string): boolean =>
   pattern === "*" || pattern === action || (pattern.endsWith(":*") && action.startsWith(pattern.slice(0, -1)));
@@ -62,21 +161,8 @@ export const consoleAgentOpsRoutes: FastifyPluginAsync = async (app) => {
     return organization;
   }
 
-  // Certificates, or why they could not be read: "not-activated" and "not-verified" are never treated as "none".
-  async function certificatesFor(organization: Organization): Promise<{ source: "authority-atlas" | "not-activated" | "not-verified"; certificates: AtlasCertificate[] }> {
-    if (!app.governance.status().atlas || !(await app.store.getServiceLink(organization.id))) return { source: "not-activated", certificates: [] };
-    try {
-      return { source: "authority-atlas", certificates: await app.governance.listCertificates(organization) };
-    } catch (error) {
-      app.log.warn({ err: (error as Error).message }, "gates: Agent Certificates could not be read");
-      return { source: "not-verified", certificates: [] };
-    }
-  }
-
-  async function policyOf(organizationId: string): Promise<GatePolicy> {
-    const saved = await app.store.getConsoleRecord(organizationId, "settings", "gates");
-    return saved ? gatePolicySchema.parse(saved.data) : DEFAULT_POLICY;
-  }
+  const certificatesFor = (organization: Organization) => gateCertificates(app, organization);
+  const policyOf = (organizationId: string) => gatePolicyOf(app, organizationId);
 
   // ---------- AD-057 approval gates by impact level ----------
   app.get("/gates", async (request) => {
@@ -102,66 +188,9 @@ export const consoleAgentOpsRoutes: FastifyPluginAsync = async (app) => {
     requireRole(request, "analyst");
     const organization = await workspace(request);
     const input = checkBody.parse(request.body);
-    const policy = await policyOf(organization.id);
-    const { impact, rule } = impactFor(policy, input);
-    const { source, certificates } = await certificatesFor(organization);
-    const reasons: string[] = [];
-    let decision: "allowed" | "blocked" | "needs-approval";
-    const active = certificates.filter((c) => c.agentId === input.agentId && c.status === "active");
-    if (source !== "authority-atlas") {
-      decision = "needs-approval";
-      reasons.push(source === "not-activated" ? "Certificates are not read yet (console not activated): not verified, so a person must approve." : "Agent Certificates could not be read: not verified, so a person must approve.");
-    } else if (!active.length) {
-      decision = "blocked";
-      reasons.push("The agent has no active certificate.");
-    } else {
-      const permissionLists = active.map((c) => c.permissions);
-      const unknownPermissions = permissionLists.every((p) => p === null);
-      const permitted = permissionLists.some((p) => Array.isArray(p) && p.some((granted) => patternMatches(granted, input.action)));
-      const limits = active.map((c) => c.limits?.maxAmountUsd).filter((v): v is number => typeof v === "number");
-      const overLimit = input.amountUsd !== undefined && limits.length > 0 && input.amountUsd > Math.max(...limits);
-      if (!unknownPermissions && !permitted) {
-        decision = "blocked";
-        reasons.push(`"${input.action}" is outside the agent's certificate permissions.`);
-      } else if (overLimit) {
-        decision = "blocked";
-        reasons.push(`The amount is above the certificate's limit of ${Math.max(...limits)} USD.`);
-      } else if (unknownPermissions) {
-        decision = "needs-approval";
-        reasons.push("The certificate lists no permissions, so whether this action is allowed is not verified: a person must approve.");
-      } else if (impact === "high") {
-        decision = "needs-approval";
-        reasons.push(rule !== null ? `Rule ${rule + 1} makes this a high-impact action.` : "The default impact is high.");
-      } else {
-        decision = "allowed";
-        reasons.push(`Within the certificate's permissions and limits; ${impact} impact.`);
-      }
-    }
-    const id = randomUUID();
-    const at = new Date().toISOString();
-    const requestedBy = actor(request).userId;
-    let requestId: string | null = null;
-    if (decision === "needs-approval") {
-      requestId = randomUUID();
-      await app.store.saveConsoleRecord({
-        organizationId: organization.id, kind: "approval-request", key: requestId,
-        data: { requestId, agentId: input.agentId, action: input.action, resource: input.resource, amountUsd: input.amountUsd ?? null, impact, reasons, requestedBy, requestedAt: at, expiresAt: new Date(Date.parse(at) + APPROVAL_TTL_MS).toISOString(), status: "pending" },
-      });
-    }
-    await app.store.saveConsoleRecord({
-      organizationId: organization.id, kind: "gate", key: `${at}:${id}`,
-      data: { id, at, agentId: input.agentId, action: input.action, resourceSha256: input.resource ? sha256Hex(input.resource) : null, amountUsd: input.amountUsd ?? null, impact, decision, reasons, certificateSource: source, requestId, by: requestedBy },
-    });
-    let receiptSeq: number | null = null;
-    if (decision !== "allowed") {
-      const receipt = await recordReceipt(app.store, app.pqSigner, {
-        orgId: organization.id, type: "gate-decision", subject: { kind: "agent", id: input.agentId },
-        facts: { decision, impact, action: input.action, amountUsd: input.amountUsd ?? null, certificateSource: source, requestId, reasonsSha256: sha256Hex(reasons.join("\n")), at },
-      }, request.log);
-      receiptSeq = receipt?.seq ?? null;
-    }
+    const result = await evaluateGate(app, organization, input, actor(request).userId, request.log);
     reply.header("Cache-Control", "no-store");
-    return reply.code(decision === "blocked" ? 403 : decision === "needs-approval" ? 202 : 200).send(success(request, { decision, impact, reasons, requestId, certificateSource: source, receiptSeq }));
+    return reply.code(result.status).send(success(request, result.body));
   });
 
   app.get("/gates/decisions", async (request) => {
@@ -175,14 +204,8 @@ export const consoleAgentOpsRoutes: FastifyPluginAsync = async (app) => {
   // account that asked approves or declines with a note; the decision becomes a signed "action-approval" receipt with
   // the approver's name, role and the time. Requests expire after 24 hours (expired never counts as approved). The
   // integration polls GET /action-approvals/:requestId. No email or phone delivery: the inbox is in the console.
-  type ApprovalRequest = {
-    requestId: string; agentId: string; action: string; resource: string; amountUsd: number | null; impact: string; reasons: string[];
-    requestedBy: string; requestedAt: string; expiresAt: string; status: "pending" | "approved" | "declined";
-    decidedBy?: string; decidedByName?: string; decidedAt?: string; noteSha256?: string; receiptSeq?: number | null;
-  };
-  const stateOf = (r: ApprovalRequest, now = Date.now()): ApprovalRequest["status"] | "expired" =>
-    r.status === "pending" && Date.parse(r.expiresAt) <= now ? "expired" : r.status;
-  const view = (r: ApprovalRequest) => ({ ...r, state: stateOf(r) });
+  const stateOf = approvalState;
+  const view = approvalView;
   const requestParams = z.object({ requestId: z.string().uuid() });
   const decideBody = z.object({ decision: z.enum(["approve", "decline"]), note: z.string().trim().min(3).max(1000) }).strict();
 

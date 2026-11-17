@@ -1,0 +1,10 @@
+{
+  "name": "@rootsystems/runtime-gate",
+  "version": "0.1.0",
+  "description": "Ask the AI Agent Trust console before an AI agent acts: allowed, blocked, or wait for a person to approve. Records the outcome in the Trust Proof ledger. Fails closed.",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test test.js" }
+}

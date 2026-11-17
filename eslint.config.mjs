@@ -27,6 +27,14 @@ export default tseslint.config(
       },
     },
   },
+  {
+    // BM-40 runtime gate SDK: plain CommonJS for Node 18+.
+    files: ["sdk/**/*.js"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: { require: "readonly", module: "writable", globalThis: "readonly", AbortSignal: "readonly", Buffer: "readonly" },
+    },
+  },
   ...tseslint.configs.recommendedTypeChecked.map((configuration) => ({
     ...configuration,
     files: ["**/*.ts"],

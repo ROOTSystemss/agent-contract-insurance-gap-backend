@@ -18,6 +18,7 @@ export const EXCLUDED: Record<string, Record<string, string>> = {
   AuthToken: { tokenHash: "one-time link hash (email confirmation / password reset)" },
   ServiceLink: { atlasSecret: "Agent Certificates service credential", trustProofSecret: "Trust Proof service credential", trustProofApiKey: "Trust Proof API key (agents use it to report actions)" },
   ConsoleCertificate: { certificate: "the agent certificate token itself (works as the agent's credential); its id, agent and dates are kept" },
+  "ConsoleRecord (runtime-key)": { "data.keyHash": "hash of a runtime gate key (BM-40); the key's name, prefix and dates are kept" },
 };
 
 function strip(model: string, row: unknown): unknown {
@@ -25,6 +26,11 @@ function strip(model: string, row: unknown): unknown {
   const out: Record<string, unknown> = {};
   const excluded = EXCLUDED[model] ?? {};
   for (const [k, v] of Object.entries(row as Record<string, unknown>)) if (!(k in excluded)) out[k] = v;
+  // BM-40: a runtime key record keeps its name/prefix/dates but never its hash.
+  if (model === "ConsoleRecord" && out.kind === "runtime-key" && out.data && typeof out.data === "object") {
+    const { keyHash: _drop, ...rest } = out.data as Record<string, unknown>;
+    out.data = rest;
+  }
   return out;
 }
 
