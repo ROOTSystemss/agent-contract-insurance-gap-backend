@@ -111,6 +111,7 @@ model Organization {
   consoleSubscription ConsoleSubscription?
   consoleSigners      ConsoleSigner[]
   evidenceReceipts    EvidenceReceipt[]
+  consoleRecords      ConsoleRecord[]
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 }
@@ -388,4 +389,20 @@ model EvidenceReceipt {
 
   @@id([organizationId, seq])
   @@index([otsStatus, createdAt])
+}
+
+// Knock-out Phase 5 (2026-11-17): the console's own governance records (agent inventory details,
+// re-certifications, policy versions and acknowledgements, incidents, kill-switch events, issued
+// packs and statements). One row per (workspace, kind, key); data is sealed JSON (field vault).
+model ConsoleRecord {
+  organizationId String       @db.Uuid
+  kind           String
+  key            String
+  data           Json
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@id([organizationId, kind, key])
+  @@index([organizationId, kind])
 }

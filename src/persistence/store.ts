@@ -19,6 +19,7 @@ import type {
   ConsoleSubscription,
   ConsoleSigner,
   EvidenceReceiptRecord,
+  ConsoleRecord,
   TwoFactorRecord,
   User,
 } from "../domain/types.js";
@@ -155,6 +156,11 @@ export interface Store {
   // Receipts whose Bitcoin timestamp is not confirmed yet, oldest first, across all workspaces.
   listUnanchoredReceipts(limit: number): Promise<EvidenceReceiptRecord[]>;
   updateReceiptTimestamp(organizationId: string, seq: number, patch: Partial<Pick<EvidenceReceiptRecord, "otsProof" | "otsStatus" | "otsConfirmedAt" | "otsBlockHeight">>): Promise<void>;
+  // Console governance records (knock-out Phase 5). Deleted with the workspace (deleteOrganization, reset).
+  listConsoleRecords(organizationId: string, kind: string): Promise<ConsoleRecord[]>;
+  getConsoleRecord(organizationId: string, kind: string, key: string): Promise<ConsoleRecord | null>;
+  saveConsoleRecord(record: { organizationId: string; kind: string; key: string; data: Record<string, unknown> }): Promise<ConsoleRecord>;
+  deleteConsoleRecord(organizationId: string, kind: string, key: string): Promise<boolean>;
   // Adds a new user to an existing workspace (team invite). Throws EMAIL_EXISTS if the email is taken.
   addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember>;
   reset(): Promise<void>;

@@ -21,6 +21,7 @@ import type {
   ConsoleSubscription,
   ConsoleSigner,
   EvidenceReceiptRecord,
+  ConsoleRecord,
   Role,
   TextSegment,
 } from "../domain/types.js";
@@ -906,6 +907,7 @@ export class PrismaStore implements Store {
 
   async reset(): Promise<void> {
     await this.client.$transaction([
+      this.client.consoleRecord.deleteMany(),
       this.client.userTwoFactor.deleteMany(),
       this.client.evidenceReceipt.deleteMany(),
       this.client.consoleSigner.deleteMany(),
@@ -927,6 +929,36 @@ export class PrismaStore implements Store {
     ]);
   }
 
+  // ---- Console governance records (knock-out Phase 5): data sealed with the field vault ----
+  private consoleRecord(row: { organizationId: string; kind: string; key: string; data: Prisma.JsonValue; createdAt: Date; updatedAt: Date }): ConsoleRecord {
+    return { organizationId: row.organizationId, kind: row.kind, key: row.key, data: this.vault.openJson<Record<string, unknown>>(row.data), createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+  }
+
+  async listConsoleRecords(organizationId: string, kind: string): Promise<ConsoleRecord[]> {
+    const rows = await this.client.consoleRecord.findMany({ where: { organizationId, kind }, orderBy: [{ createdAt: "asc" }, { key: "asc" }] });
+    return rows.map((row) => this.consoleRecord(row));
+  }
+
+  async getConsoleRecord(organizationId: string, kind: string, key: string): Promise<ConsoleRecord | null> {
+    const row = await this.client.consoleRecord.findUnique({ where: { organizationId_kind_key: { organizationId, kind, key } } });
+    return row ? this.consoleRecord(row) : null;
+  }
+
+  async saveConsoleRecord(record: { organizationId: string; kind: string; key: string; data: Record<string, unknown> }): Promise<ConsoleRecord> {
+    const data = this.sealJson(record.data);
+    const row = await this.client.consoleRecord.upsert({
+      where: { organizationId_kind_key: { organizationId: record.organizationId, kind: record.kind, key: record.key } },
+      create: { organizationId: record.organizationId, kind: record.kind, key: record.key, data },
+      update: { data },
+    });
+    return this.consoleRecord(row);
+  }
+
+  async deleteConsoleRecord(organizationId: string, kind: string, key: string): Promise<boolean> {
+    const result = await this.client.consoleRecord.deleteMany({ where: { organizationId, kind, key } });
+    return result.count > 0;
+  }
+
   // ---- Account deletion (S-14) ----
   async listMembershipsForUser(userId: string): Promise<OrganizationMember[]> {
     const rows = await this.client.organizationMember.findMany({ where: { userId }, orderBy: { createdAt: "asc" } });
@@ -944,6 +976,7 @@ export class PrismaStore implements Store {
     // document -> uploader, audit event -> actor) go before the rows they point at.
     await this.client.$transaction([
       this.client.evidenceReceipt.deleteMany({ where: { organizationId } }),
+      this.client.consoleRecord.deleteMany({ where: { organizationId } }),
       this.client.consoleSigner.deleteMany({ where: { organizationId } }),
       this.client.consoleSubscription.deleteMany({ where: { organizationId } }),
       this.client.consoleCertificate.deleteMany({ where: { organizationId } }),

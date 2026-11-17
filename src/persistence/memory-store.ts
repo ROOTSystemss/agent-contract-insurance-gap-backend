@@ -21,6 +21,7 @@ import type {
   ConsoleSubscription,
   ConsoleSigner,
   EvidenceReceiptRecord,
+  ConsoleRecord,
 } from "../domain/types.js";
 import type { RegistrationRecord, Store } from "./store.js";
 
@@ -59,6 +60,7 @@ export class MemoryStore implements Store {
   private billingEvents = new Set<string>();
   private consoleSigners = new Map<string, ConsoleSigner>();
   private receipts = new Map<string, EvidenceReceiptRecord>();
+  private consoleRecords = new Map<string, ConsoleRecord>();
   private authTokens = new Map<string, { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string; usedAt: string | null }>();
 
   async ready(): Promise<boolean> {
@@ -568,6 +570,29 @@ export class MemoryStore implements Store {
     this.auditEvents.clear();
   }
 
+  // ---- Console governance records (knock-out Phase 5) ----
+  async listConsoleRecords(organizationId: string, kind: string): Promise<ConsoleRecord[]> {
+    return clone([...this.consoleRecords.values()].filter((r) => r.organizationId === organizationId && r.kind === kind).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.key.localeCompare(b.key)));
+  }
+
+  async getConsoleRecord(organizationId: string, kind: string, key: string): Promise<ConsoleRecord | null> {
+    const found = this.consoleRecords.get(`${organizationId}:${kind}:${key}`);
+    return found ? clone(found) : null;
+  }
+
+  async saveConsoleRecord(record: { organizationId: string; kind: string; key: string; data: Record<string, unknown> }): Promise<ConsoleRecord> {
+    const id = `${record.organizationId}:${record.kind}:${record.key}`;
+    const existing = this.consoleRecords.get(id);
+    const stamp = now();
+    const saved: ConsoleRecord = { ...record, data: clone(record.data), createdAt: existing?.createdAt ?? stamp, updatedAt: stamp };
+    this.consoleRecords.set(id, saved);
+    return clone(saved);
+  }
+
+  async deleteConsoleRecord(organizationId: string, kind: string, key: string): Promise<boolean> {
+    return this.consoleRecords.delete(`${organizationId}:${kind}:${key}`);
+  }
+
   // ---- Account deletion (S-14) ----
   async listMembershipsForUser(userId: string): Promise<OrganizationMember[]> {
     return clone([...this.memberships.values()].filter((m) => m.userId === userId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
@@ -580,7 +605,7 @@ export class MemoryStore implements Store {
   async deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }> {
     const storageKeys = [...this.documents.values()].filter((d) => d.organizationId === organizationId).map((d) => d.storageKey);
     const drop = <V extends { organizationId: string }>(map: Map<string, V>) => { for (const [k, v] of map) if (v.organizationId === organizationId) map.delete(k); };
-    drop(this.receipts); drop(this.consoleSigners); drop(this.consoleSubscriptions); drop(this.consoleCertificates); drop(this.serviceLinks);
+    drop(this.receipts); drop(this.consoleRecords); drop(this.consoleSigners); drop(this.consoleSubscriptions); drop(this.consoleCertificates); drop(this.serviceLinks);
     drop(this.auditEvents); drop(this.findings); drop(this.analyses); drop(this.documents); drop(this.agents); drop(this.projects); drop(this.memberships);
     this.organizations.delete(organizationId);
     return { storageKeys };

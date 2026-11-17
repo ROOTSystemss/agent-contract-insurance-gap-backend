@@ -17,6 +17,7 @@ import { SecretBox } from "./governance/secret-box.js";
 import { ConsoleBilling, PLANS } from "./governance/billing.js";
 import { billingWebhookRoutes } from "./api/billing-webhook-routes.js";
 import { consoleRoutes } from "./api/console-routes.js";
+import { consoleRecordsRoutes } from "./api/console-records-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
 import { assertKeyHistory, keyHistory } from "./crypto/key-history.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
@@ -474,6 +475,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(findingRoutes, { prefix: "/api/v1/findings" });
   await app.register(auditRoutes, { prefix: "/api/v1/projects" });
   await app.register(consoleRoutes, { prefix: "/api/v1/console" });
+  await app.register(consoleRecordsRoutes, { prefix: "/api/v1/console" }); // governance records (knock-out Phase 5)
   await app.register(billingWebhookRoutes, { prefix: "/api/v1/billing" });
 
   return app;

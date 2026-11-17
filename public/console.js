@@ -284,9 +284,10 @@
     { id: "ledger", label: "Action ledger", icon: "ledger" },
     { id: "approvals", label: "Approvals", icon: "approvals" },
     { id: "coverage", label: "Coverage", icon: "coverage" },
+    { id: "records", label: "Governance records", icon: "approvals" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
-  var TITLES = { overview: "Overview", agents: "Agents & certificates", ledger: "Action ledger", approvals: "Approvals", coverage: "Contract & insurance coverage", settings: "Settings" };
+  var TITLES = { overview: "Overview", agents: "Agents & certificates", ledger: "Action ledger", approvals: "Approvals", coverage: "Contract & insurance coverage", records: "Governance records", settings: "Settings" };
 
   function renderShell() {
     var me = state.me || {};
@@ -352,7 +353,7 @@
     var content = renderShell();
     if (state.status && (!state.status.configured.atlas || !state.status.configured.trustProof)) return viewNotConfigured(content);
     if (state.status && !state.status.linked && state.route !== "coverage") return viewActivate(content);
-    ({ overview: viewOverview, agents: viewAgents, ledger: viewLedger, approvals: viewApprovals, coverage: viewCoverage, settings: viewSettings })[state.route](content);
+    ({ overview: viewOverview, agents: viewAgents, ledger: viewLedger, approvals: viewApprovals, coverage: viewCoverage, records: viewRecords, settings: viewSettings })[state.route](content);
   }
   window.addEventListener("hashchange", function () { if (state.me) render(); });
 
@@ -774,6 +775,64 @@
     }
     load();
   }
+
+  // ----- governance records (knock-out Phase 5): inventory, re-certification, policies, incidents, kill switch, packs -----
+  // Each section is a small function appended to the page; all data comes from /api/v1/console/* (own workspace only).
+  var RECORD_SECTIONS = [];
+  function viewRecords(content) {
+    content.appendChild(h("p", { class: "muted", style: "margin:0 0 16px;max-width:760px", text: "Your workspace's own governance records on top of the live certificates, ledger and approvals. Entries marked attested are what someone in your workspace entered; certificate status is read live from Agent Certificates. Decision support only, not legal or insurance advice." }));
+    RECORD_SECTIONS.forEach(function (section) { section(content); });
+  }
+  function recordsPanel(title, intro) {
+    var body = h("div");
+    return { panel: h("div", { class: "panel", style: "margin-bottom:18px" }, h("div", { class: "panel__head" }, h("div", null, h("h3", { text: title }), intro ? h("p", { text: intro }) : null)), body), body: body };
+  }
+  function field(label, input, hint) {
+    return h("label", { class: "field", style: "display:block;margin:8px 0" }, h("span", { style: "display:block;font-size:12.5px;margin-bottom:4px", text: label }), input, hint ? h("small", { class: "faint", style: "display:block;font-size:11.5px;margin-top:2px", text: hint }) : null);
+  }
+
+  // AD-056 agent inventory
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Agent inventory", "Every AI agent, its owner, vendor, purpose and data access, with its live certificate status.");
+    content.appendChild(p.panel);
+    var note = h("p", { class: "faint", style: "font-size:12.5px" });
+    var table = h("tbody");
+    var form = { id: h("input", { class: "input mono", placeholder: "invoice-bot", "aria-label": "Agent id" }), name: h("input", { class: "input", placeholder: "Invoice bot", "aria-label": "Agent name" }), owner: h("input", { class: "input", placeholder: "Finance operations lead", "aria-label": "Owner" }), vendor: h("input", { class: "input", placeholder: "Acme AI", "aria-label": "Vendor" }), purpose: h("input", { class: "input", placeholder: "Pays approved invoices up to the limit", "aria-label": "Purpose" }), data: h("input", { class: "input", placeholder: "ERP invoices; vendor bank details", "aria-label": "Data access" }) };
+    p.body.appendChild(note);
+    p.body.appendChild(h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Agent", "Owner", "Vendor", "Data access", "Status"].map(function (x) { return h("th", { text: x }); }))), table)));
+    p.body.appendChild(h("div", { style: "display:flex;gap:10px;margin:10px 0" }, h("a", { class: "btn btn--sm", href: "#", onclick: function (e) { e.preventDefault(); downloadCsv(); } }, "Download CSV")));
+    p.body.appendChild(h("details", null, h("summary", { text: "Add or update an agent's details" }),
+      field("Agent id", form.id, "The id its certificate uses (letters, digits, . _ : -). Example: invoice-bot"),
+      field("Name", form.name, "A plain name people recognise. Example: Invoice bot"),
+      field("Owner", form.owner, "A role or team that answers for this agent, not a personal email. Example: Finance operations lead"),
+      field("Vendor", form.vendor, "Who makes or hosts the agent. Example: Acme AI"),
+      field("Purpose", form.purpose, "What it is allowed to do, in one sentence."),
+      field("Data access", form.data, "What data it can read or change, separated by ;. Example: ERP invoices; vendor bank details"),
+      h("button", { class: "btn btn--primary btn--sm", onclick: save }, "Save details")));
+    function load() {
+      api("/console/agents").then(function (r) {
+        note.textContent = r.note;
+        clear(table);
+        if (!r.agents.length) { table.appendChild(h("tr", null, h("td", { colspan: "5", class: "faint", text: "No agents yet. Issue a certificate or add an agent's details below." }))); return; }
+        r.agents.forEach(function (a) {
+          table.appendChild(h("tr", null,
+            h("td", null, h("div", { text: a.name }), h("div", { class: "faint mono", style: "font-size:11.5px", text: a.agentId })),
+            h("td", { text: a.owner || "not entered" }), h("td", { text: a.vendor || "-" }), h("td", { text: (a.dataAccess || []).join(", ") || "-" }),
+            h("td", null, h("span", { class: "pill pill--" + (a.status === "active" ? "within" : a.status === "not verified" ? "pq" : "outside"), text: a.status }))));
+        });
+      }).catch(function (err) { toast(err.message, true); });
+    }
+    function save() {
+      var body = { name: form.name.value.trim(), owner: form.owner.value.trim(), vendor: form.vendor.value.trim(), purpose: form.purpose.value.trim(), dataAccess: form.data.value.split(";").map(function (x) { return x.trim(); }).filter(Boolean) };
+      api("/console/agents/" + encodeURIComponent(form.id.value.trim()), { method: "PUT", body: body }).then(function () { toast("Agent details saved"); load(); }).catch(function (err) { toast(err.message, true); });
+    }
+    function downloadCsv() {
+      fetch("/api/v1/console/agents.csv", { headers: { Authorization: "Bearer " + state.token } }).then(function (res) { return res.blob(); }).then(function (blob) {
+        var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "agent-inventory.csv"; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+      }).catch(function () { toast("Download failed", true); });
+    }
+    load();
+  });
 
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };

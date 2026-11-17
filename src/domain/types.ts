@@ -170,6 +170,17 @@ export interface ConsoleSubscription {
 
 // One Evidence Notary receipt (evidence/receipts.ts): a signed statement of something this service
 // did, chained per workspace, with its OpenTimestamps (Bitcoin) anchoring state.
+// Console governance records (knock-out Phase 5): one row per (workspace, kind, key); data is free-form JSON
+// sealed at rest by the Postgres store.
+export interface ConsoleRecord {
+  organizationId: string;
+  kind: string;
+  key: string;
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EvidenceReceiptRecord {
   organizationId: string;
   seq: number;
