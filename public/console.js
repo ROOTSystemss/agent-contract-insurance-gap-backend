@@ -892,6 +892,42 @@
     load();
   });
 
+  // AD-060 policy templates with signed acknowledgement
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Policies", "AI use and agent approval policy templates. Admins publish a version; everyone acknowledges it. Both steps become signed receipts. Templates are a starting point, not legal advice.");
+    content.appendChild(p.panel);
+    var host = h("div");
+    p.body.appendChild(host);
+    function load() {
+      api("/console/policies").then(function (list) {
+        clear(host);
+        list.forEach(function (pol) {
+          var editor = h("textarea", { class: "input", rows: "12", style: "width:100%;font-size:12.5px", "aria-label": pol.title + " text" });
+          editor.value = pol.current ? pol.current.text : pol.templateText;
+          var who = h("ul", { class: "faint", style: "font-size:12px" });
+          host.appendChild(h("div", { style: "border-top:1px solid var(--line,#333);padding:12px 0" },
+            h("h4", { style: "margin:0 0 4px", text: pol.title + (pol.current ? " - version " + pol.current.version : " - not published yet") }),
+            h("p", { class: "faint", style: "font-size:12px;margin:0 0 6px", text: "Supports: " + pol.supports.join("; ") }),
+            pol.current ? (pol.acknowledgedByMe ? h("span", { class: "pill pill--within", text: "you acknowledged this version" }) : h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+              api("/console/policies/" + pol.id + "/acknowledge", { method: "POST", body: { version: pol.current.version } }).then(function () { toast("Acknowledged; a signed receipt was recorded"); load(); }).catch(function (err) { toast(err.message, true); });
+            } }, "I have read and acknowledge version " + pol.current.version)) : null,
+            h("details", { style: "margin-top:8px" }, h("summary", { text: "Edit and publish (admins)" }),
+              field("Policy text", editor, "Replace the [bracketed] parts with your organisation's details. Publishing a changed text creates a new version that everyone must acknowledge again."),
+              h("button", { class: "btn btn--sm", onclick: function () {
+                api("/console/policies/" + pol.id + "/publish", { method: "POST", body: { text: editor.value } }).then(function (r) { toast(r.unchanged ? "No change: still version " + r.version : "Published version " + r.version); load(); }).catch(function (err) { toast(err.message, true); });
+              } }, "Publish this version"),
+              h("button", { class: "btn btn--sm btn--ghost", style: "margin-left:8px", onclick: function () {
+                api("/console/policies/" + pol.id + "/acknowledgements").then(function (r) {
+                  clear(who);
+                  r.members.forEach(function (m) { who.appendChild(h("li", { text: m.name + " (" + m.role + "): " + (m.acknowledgedAt ? "acknowledged " + m.acknowledgedAt.slice(0, 10) : "not yet") })); });
+                }).catch(function (err) { toast(err.message, true); });
+              } }, "Who has acknowledged?"), who)));
+        });
+      }).catch(function (err) { toast(err.message, true); });
+    }
+    load();
+  });
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {

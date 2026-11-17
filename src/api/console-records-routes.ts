@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { Organization } from "../domain/types.js";
 import type { AtlasCertificate } from "../governance/gateway.js";
 import { createHash } from "node:crypto";
-import { notFound } from "../shared/errors.js";
+import { AppError, notFound } from "../shared/errors.js";
+import { POLICY_TEMPLATES } from "../governance/policy-templates.js";
 import { checkChain, recordReceipt } from "../evidence/receipts.js";
 import { BROKER_PACK_SCHEMA, signDocument } from "../reports/signed-document.js";
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
@@ -305,6 +306,82 @@ export const consoleRecordsRoutes: FastifyPluginAsync = async (app) => {
     const organization = await workspace(request);
     const rows = await app.store.listConsoleRecords(organization.id, "broker-pack");
     return success(request, rows.map((r) => r.data).reverse());
+  });
+
+  // ---------- AD-060 policy templates with signed acknowledgement ----------
+  // Admins publish a version of a template (text sealed at rest, SHA-256 + signed "policy-published" receipt); every
+  // member acknowledges the CURRENT version (signed "policy-acknowledged" receipt with ids and the text's hash, no
+  // name or email). A new version needs new acknowledgements; publishing unchanged text makes no new version.
+  type PolicyVersion = { version: number; sha256: string; text: string; publishedAt: string; publishedBy: string };
+  const policyParams = z.object({ policyId: z.enum(["ai-use", "agent-approval"]) });
+  async function versionsOf(organizationId: string, policyId: string): Promise<PolicyVersion[]> {
+    const saved = await app.store.getConsoleRecord(organizationId, "policy", policyId);
+    return ((saved?.data as { versions?: PolicyVersion[] } | undefined)?.versions ?? []);
+  }
+
+  app.get("/policies", async (request) => {
+    const organization = await workspace(request);
+    const me = actor(request).userId;
+    const acks = await app.store.listConsoleRecords(organization.id, "policy-ack");
+    const out = [];
+    for (const template of POLICY_TEMPLATES) {
+      const versions = await versionsOf(organization.id, template.id);
+      const current = versions.at(-1) ?? null;
+      out.push({
+        id: template.id, title: template.title, supports: template.supports, templateText: template.text,
+        current: current ? { version: current.version, sha256: current.sha256, text: current.text, publishedAt: current.publishedAt } : null,
+        acknowledgedByMe: Boolean(current && acks.some((a) => a.key === `${template.id}:${current.version}:${me}`)),
+      });
+    }
+    return success(request, out);
+  });
+
+  app.post("/policies/:policyId/publish", async (request, reply) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { policyId } = policyParams.parse(request.params);
+    const { text } = z.object({ text: z.string().trim().min(50).max(20000) }).strict().parse(request.body);
+    const versions = await versionsOf(organization.id, policyId);
+    const sha256 = sha256Hex(text);
+    if (versions.at(-1)?.sha256 === sha256) return reply.code(200).send(success(request, { policyId, version: versions.at(-1)!.version, sha256, unchanged: true }));
+    const version: PolicyVersion = { version: (versions.at(-1)?.version ?? 0) + 1, sha256, text, publishedAt: new Date().toISOString(), publishedBy: actor(request).userId };
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "policy", key: policyId, data: { versions: [...versions, version] } });
+    await audit(app.store, request, "organization", organization.id, "console.policy_published", { policyId, version: version.version });
+    const receipt = await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: "policy-published", subject: { kind: "policy", id: policyId }, facts: { version: version.version, sha256 } }, request.log);
+    return reply.code(201).send(success(request, { policyId, version: version.version, sha256, receiptSeq: receipt?.seq ?? null }));
+  });
+
+  app.post("/policies/:policyId/acknowledge", async (request, reply) => {
+    const organization = await workspace(request);
+    const { policyId } = policyParams.parse(request.params);
+    const { version } = z.object({ version: z.number().int().positive() }).strict().parse(request.body);
+    const current = (await versionsOf(organization.id, policyId)).at(-1);
+    if (!current) throw new AppError(409, "NOT_PUBLISHED", "This policy has not been published yet.");
+    if (current.version !== version) throw new AppError(409, "NOT_CURRENT", `Version ${version} is not the current version (${current.version}). Read the current version and acknowledge that.`);
+    const userId = actor(request).userId;
+    const key = `${policyId}:${version}:${userId}`;
+    if (await app.store.getConsoleRecord(organization.id, "policy-ack", key)) return reply.code(200).send(success(request, { policyId, version, alreadyAcknowledged: true }));
+    const at = new Date().toISOString();
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "policy-ack", key, data: { policyId, version, sha256: current.sha256, userId, at } });
+    await audit(app.store, request, "organization", organization.id, "console.policy_acknowledged", { policyId, version });
+    const receipt = await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: "policy-acknowledged", subject: { kind: "policy", id: policyId }, facts: { version, sha256: current.sha256, userId } }, request.log);
+    return reply.code(201).send(success(request, { policyId, version, at, receiptSeq: receipt?.seq ?? null }));
+  });
+
+  app.get("/policies/:policyId/acknowledgements", async (request) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { policyId } = policyParams.parse(request.params);
+    const current = (await versionsOf(organization.id, policyId)).at(-1);
+    const [members, acks] = await Promise.all([app.store.listMembers(organization.id), app.store.listConsoleRecords(organization.id, "policy-ack")]);
+    return success(request, {
+      policyId,
+      version: current?.version ?? null,
+      members: members.map((m) => {
+        const ack = current ? acks.find((a) => a.key === `${policyId}:${current.version}:${m.userId}`) : undefined;
+        return { userId: m.userId, name: m.user.name, role: m.role, acknowledgedAt: (ack?.data as { at?: string } | undefined)?.at ?? null };
+      }),
+    });
   });
 
   app.delete("/agents/:agentId", async (request) => {

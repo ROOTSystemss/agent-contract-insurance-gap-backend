@@ -198,6 +198,59 @@ describe("console governance records", () => {
     });
   });
 
+  describe("AD-060 policy templates with signed acknowledgement", () => {
+    let memberToken: string;
+    let memberId: string;
+    beforeAll(async () => {
+      const teamRes = await call("POST", "/team", ownerToken, { name: "Policy Member", email: "records-member@example.com", role: "analyst" });
+      const added = data<{ temporaryPassword: string }>(teamRes);
+      const loginRes = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "records-member@example.com", password: added.temporaryPassword } });
+      const login = JSON.parse(loginRes.payload) as { data: { accessToken: string; user: { id: string } } };
+      memberToken = login.data.accessToken;
+      memberId = (JSON.parse((await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { authorization: `Bearer ${memberToken}` } })).payload) as { data: { user: { id: string } } }).data.user.id;
+    });
+
+    it("offers two original templates marked as templates, not legal advice", async () => {
+      const list = data<Array<{ id: string; templateText: string; current: unknown }>>(await call("GET", "/policies", ownerToken));
+      expect(list.map((p) => p.id)).toEqual(["ai-use", "agent-approval"]);
+      for (const p of list) {
+        expect(p.templateText).toMatch(/TEMPLATE/);
+        expect(p.templateText).toMatch(/Not legal advice/);
+        expect(p.templateText).not.toMatch(/\bcompliant\b|\bcertified\b/i);
+        expect(p.current).toBeNull();
+      }
+    });
+
+    it("admin publishes; member acknowledges the current version; both are signed receipts; a new version resets", async () => {
+      const text = (data<Array<{ id: string; templateText: string }>>(await call("GET", "/policies", ownerToken)))[0]!.templateText.replace("[Organisation]", "Records Org");
+      expect((await call("POST", "/policies/ai-use/publish", memberToken, { text })).statusCode).toBe(403);
+      expect((await call("POST", "/policies/ai-use/acknowledge", memberToken, { version: 1 })).statusCode).toBe(409);
+      const pub = await call("POST", "/policies/ai-use/publish", ownerToken, { text });
+      expect(pub.statusCode).toBe(201);
+      expect(data<{ unchanged?: boolean }>(await call("POST", "/policies/ai-use/publish", ownerToken, { text })).unchanged).toBe(true);
+      expect((await call("POST", "/policies/ai-use/acknowledge", memberToken, { version: 1 })).statusCode).toBe(201);
+      expect(data<{ alreadyAcknowledged?: boolean }>(await call("POST", "/policies/ai-use/acknowledge", memberToken, { version: 1 })).alreadyAcknowledged).toBe(true);
+      let acks = data<{ members: Array<{ userId: string; acknowledgedAt: string | null }> }>(await call("GET", "/policies/ai-use/acknowledgements", ownerToken));
+      expect(acks.members.find((m) => m.userId === memberId)!.acknowledgedAt).not.toBeNull();
+      const ackReceipt = (await receipts()).receipts.find((r) => r.type === "policy-acknowledged")!;
+      expect(ackReceipt.receipt.facts).toMatchObject({ version: 1, userId: memberId });
+      expect(JSON.stringify(ackReceipt.receipt)).not.toMatch(/records-member@example\.com|Policy Member/);
+      expect((await publicVerify(ackReceipt.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify(tamper(ackReceipt.receipt))).verdict).toBe("FAIL");
+      expect((await call("POST", "/policies/ai-use/publish", ownerToken, { text: text + "\n9. Added clause for version two." })).statusCode).toBe(201);
+      expect((await call("POST", "/policies/ai-use/acknowledge", memberToken, { version: 1 })).statusCode).toBe(409);
+      acks = data(await call("GET", "/policies/ai-use/acknowledgements", ownerToken));
+      expect(acks.members.find((m) => m.userId === memberId)!.acknowledgedAt).toBeNull();
+      expect((await call("GET", "/policies/ai-use/acknowledgements", memberToken)).statusCode).toBe(403);
+      expect((await call("POST", "/policies/not-a-policy/publish", ownerToken, { text })).statusCode).toBe(400);
+    });
+
+    it("another workspace sees no published versions", async () => {
+      const list = data<Array<{ current: unknown }>>(await call("GET", "/policies", otherToken));
+      expect(list.every((p) => p.current === null)).toBe(true);
+    });
+  });
+
   describe("account deletion removes the records", () => {
     it("deleting the sole owner's account deletes the workspace's console records", async () => {
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { email: "records-del@example.com", name: "Del", organizationName: "Del Org", password: "Correct Horse Battery 123!" } });
