@@ -4,7 +4,9 @@ import type { Organization } from "../domain/types.js";
 import type { AtlasCertificate } from "../governance/gateway.js";
 import { createHash } from "node:crypto";
 import { notFound } from "../shared/errors.js";
-import { recordReceipt } from "../evidence/receipts.js";
+import { checkChain, recordReceipt } from "../evidence/receipts.js";
+import { BROKER_PACK_SCHEMA, signDocument } from "../reports/signed-document.js";
+import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 
 export const sha256Hex = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
@@ -219,6 +221,90 @@ export const consoleRecordsRoutes: FastifyPluginAsync = async (app) => {
       agentId, decision: input.decision, at, nextDueAt, receiptSeq: receipt?.seq ?? null,
       ...(input.decision === "revoke-requested" ? { next: "Recorded only. To stop the agent, use the kill switch (it revokes the agent's certificates and records the proof)." } : {}),
     }));
+  });
+
+  // ---------- AD-059 insurance broker pack ----------
+  // A signed summary of how this workspace governs its agents, for a conversation with a broker or insurer, plus the
+  // questions worth asking them. Same signed format as the Agent Assurance Pack, so the public /verify checks it.
+  // Counts and roles only: no contract text, no ledger details, no personal data.
+  const BROKER_QUESTIONS = [
+    "When an AI agent takes an action on our behalf, does the policy treat it as our action, and is that covered or excluded?",
+    "Is there an exclusion for losses caused by automated or AI decision-making? Please share the exact wording.",
+    "Are payments or changes an agent makes within its approved limits treated differently from ones outside them?",
+    "Would signed records of an agent's authority (certificates, the action ledger, named approvals) help when a claim is assessed?",
+    "What notice do you need after an agent error, and within how many days?",
+    "Are failures of a third-party AI vendor's model or service covered, or only our own systems?",
+    "Is there a sublimit for fraudulent instructions or social engineering that involve an AI agent?",
+    "Do you expect named human sign-off for agent permission changes, and is our re-certification cadence acceptable?",
+  ];
+  async function coverageSummary(organizationId: string) {
+    const projects = await app.store.listProjects(organizationId, { page: 1, pageSize: 50 });
+    const byAttention: Record<string, number> = {};
+    let total = 0;
+    for (const project of projects.items) {
+      const analyses = await app.store.listAnalyses(organizationId, project.id, { page: 1, pageSize: 50 });
+      for (const analysis of analyses.items) {
+        total++;
+        const label = analysis.attentionScore?.label ?? (analysis.state === "completed" ? "not scored" : analysis.state);
+        byAttention[label] = (byAttention[label] ?? 0) + 1;
+      }
+    }
+    return { analyses: total, byAttention, truncated: projects.total > projects.items.length };
+  }
+
+  app.post("/broker-pack", async (request, reply) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    const [{ source, agents }, recert, incidents, kills, coverage, receiptRecords] = await Promise.all([
+      inventory(organization),
+      recertification(organization),
+      app.store.listConsoleRecords(organization.id, "incident"),
+      app.store.listConsoleRecords(organization.id, "kill"),
+      coverageSummary(organization.id),
+      app.store.listReceipts(organization.id),
+    ]);
+    const byStatus: Record<string, number> = {};
+    for (const a of agents) byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
+    const chain = checkChain(organization.id, receiptRecords.map((r) => r.receipt));
+    const doc = {
+      schema: BROKER_PACK_SCHEMA,
+      generatedAt: new Date().toISOString(),
+      workspace: { name: organization.name },
+      purpose: "How this workspace governs its AI agents, summarised for a conversation with an insurance broker or insurer.",
+      agents: {
+        certificateSource: source,
+        total: agents.length,
+        byStatus,
+        list: agents.map((a) => {
+          const r = recert.agents.find((x) => x.agentId === a.agentId);
+          return { agentId: a.agentId, name: a.name, status: a.status, owner: a.owner ?? "not entered", vendor: a.vendor ?? "not entered", dataAccessAreas: a.dataAccess.length, recertification: { state: r?.state ?? "never", lastDecision: r?.lastDecision ?? null, dueAt: r?.dueAt ?? null } };
+        }),
+      },
+      recertification: { cadenceDays: recert.cadenceDays, overdue: recert.agents.filter((a) => a.state === "overdue").length },
+      incidents: { recorded: incidents.length, open: incidents.filter((i) => (i.data as { status?: string }).status !== "closed").length },
+      killSwitch: { uses: kills.length },
+      coverageAnalyses: coverage,
+      evidenceChain: { receipts: receiptRecords.length, intact: chain.intact },
+      questionsToAsk: BROKER_QUESTIONS,
+      limitations: [
+        "Owner, vendor, purpose and data access are entered by the workspace (attested), not independently verified.",
+        source === "authority-atlas" ? "Certificate statuses were read live from Agent Certificates when this pack was made." : "Certificate statuses could not be read when this pack was made; they read 'not verified'.",
+        "Counts only: no contract text, no action-ledger details and no personal data are included.",
+      ],
+      disclaimer: CANONICAL_DISCLAIMER,
+    };
+    const signed = signDocument(doc, app.pqSigner);
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "broker-pack", key: signed.contentHash, data: { generatedAt: doc.generatedAt, contentHash: signed.contentHash, agents: agents.length } });
+    await audit(app.store, request, "organization", organization.id, "console.broker_pack_issued", { contentHash: signed.contentHash });
+    await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: "broker-pack-issued", subject: { kind: "broker-pack", id: signed.contentHash }, facts: { contentHash: signed.contentHash, agents: agents.length } }, request.log);
+    reply.header("Cache-Control", "no-store");
+    return reply.code(201).send(success(request, signed));
+  });
+
+  app.get("/broker-packs", async (request) => {
+    const organization = await workspace(request);
+    const rows = await app.store.listConsoleRecords(organization.id, "broker-pack");
+    return success(request, rows.map((r) => r.data).reverse());
   });
 
   app.delete("/agents/:agentId", async (request) => {

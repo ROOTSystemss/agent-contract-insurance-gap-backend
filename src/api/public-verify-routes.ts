@@ -4,6 +4,7 @@ import { publishedKeys } from "../crypto/key-history.js";
 import { verifyWithPublicKey } from "../crypto/pq-sign.js";
 import { verifyOne } from "../evidence/receipts.js";
 import { verifyAssurancePack } from "../reports/assurance-pack.js";
+import { DOCUMENT_KINDS } from "../reports/signed-document.js";
 import { buildSamplePack, SAMPLE_NOTICE } from "../reports/sample-pack.js";
 
 // Public checks, no account: anyone holding an AI Agent Trust Evidence Notary receipt or an Agent
@@ -55,7 +56,9 @@ export const publicVerifyRoutes: FastifyPluginAsync = async (app) => {
         : "The signature does not match the pack.";
       // A SAMPLE pack says so inside its hashed, signed content; only a valid pack can be reported as a sample.
       const sample = result.valid && (parsed.pack as { sample?: unknown }).sample === true;
-      return { data: { kind: "assurance-pack", verdict: result.valid ? "PASS" : "FAIL", reason, signature: result.signature.status, computedHash: result.computedHash, ...(sample ? { sample: true, sampleNotice: String((parsed.pack as { sampleNotice?: unknown }).sampleNotice ?? "SAMPLE") } : {}) } };
+      // Other signed documents in the same format name their kind by the schema inside the signed content.
+      const kind = DOCUMENT_KINDS[String((parsed.pack as { schema?: unknown }).schema ?? "")] ?? "assurance-pack";
+      return { data: { kind, verdict: result.valid ? "PASS" : "FAIL", reason, signature: result.signature.status, computedHash: result.computedHash, ...(sample ? { sample: true, sampleNotice: String((parsed.pack as { sampleNotice?: unknown }).sampleNotice ?? "SAMPLE") } : {}) } };
     }
     return { data: { kind: null, verdict: "FAIL", reason: "Choose a receipt or an Agent Assurance Pack (.json)." } };
   });

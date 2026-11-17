@@ -869,6 +869,29 @@
     load();
   });
 
+  // AD-059 insurance broker pack
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Insurance broker pack", "A signed summary of how you govern your agents, with questions to ask your broker. Anyone can check it on the public /verify page. Not insurance advice.");
+    content.appendChild(p.panel);
+    var list = h("ul", { class: "faint", style: "font-size:12.5px" });
+    p.body.appendChild(h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+      api("/console/broker-pack", { method: "POST" }).then(function (signed) {
+        var blob = new Blob([JSON.stringify(signed, null, 2)], { type: "application/json" });
+        var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "broker-pack-" + signed.pack.generatedAt.slice(0, 10) + ".json"; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+        toast("Broker pack signed and downloaded"); load();
+      }).catch(function (err) { toast(err.message, true); });
+    } }, "Make and download the signed pack"));
+    p.body.appendChild(h("p", { class: "faint", style: "font-size:12px;margin-top:8px", text: "Check a pack: open /verify and choose the downloaded .json file." }));
+    p.body.appendChild(list);
+    function load() {
+      api("/console/broker-packs").then(function (rows) {
+        clear(list);
+        rows.slice(0, 5).forEach(function (r) { list.appendChild(h("li", { text: r.generatedAt.slice(0, 16).replace("T", " ") + " UTC - " + r.agents + " agents - fingerprint " + r.contentHash.slice(0, 16) + "..." })); });
+      }).catch(function () {});
+    }
+    load();
+  });
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {

@@ -169,6 +169,35 @@ describe("console governance records", () => {
     });
   });
 
+  describe("AD-059 insurance broker pack", () => {
+    const verifyPack = async (body: { pack: unknown; contentHash: string; signature: { value: string; publicKey: string } }) =>
+      data<{ kind: string; verdict: string }>(await app.inject({ method: "POST", url: "/api/v1/public/verify", payload: { pack: body.pack, contentHash: body.contentHash, signature: { value: body.signature.value, publicKey: body.signature.publicKey } } }));
+
+    it("builds a signed summary with questions to ask; /verify passes it as a broker pack and fails a changed copy", async () => {
+      const res = await call("POST", "/broker-pack", ownerToken);
+      expect(res.statusCode).toBe(201);
+      const signed = data<{ pack: Record<string, any>; contentHash: string; signature: { value: string; publicKey: string } }>(res);
+      expect(signed.pack.schema).toBe("rootsystems.agent-broker-pack.v1");
+      expect(signed.pack.agents.total).toBeGreaterThanOrEqual(2);
+      expect(signed.pack.questionsToAsk.length).toBeGreaterThanOrEqual(6);
+      expect(signed.pack.evidenceChain.intact).toBe(true);
+      const text = JSON.stringify(signed.pack);
+      expect(text).not.toMatch(/records-owner@example\.com|@example\.com/);
+      expect(text.replace(/not legal advice, insurance advice|licensed insurance professionals|insurance broker or insurer/gi, "")).not.toMatch(/\binsured\b|\bcompliant\b|\bcertified\b/i);
+      const ok = await verifyPack(signed);
+      expect(ok).toMatchObject({ kind: "broker-pack", verdict: "PASS" });
+      const changed = { ...signed, pack: { ...signed.pack, incidents: { recorded: 0, open: 0, edited: true } } };
+      expect((await verifyPack(changed)).verdict).toBe("FAIL");
+      expect((await receipts()).receipts.some((r) => r.type === "broker-pack-issued")).toBe(true);
+      expect(data<Array<{ contentHash: string }>>(await call("GET", "/broker-packs", ownerToken))[0]!.contentHash).toBe(signed.contentHash);
+    });
+
+    it("viewers cannot issue one; another workspace sees none", async () => {
+      expect((await call("POST", "/broker-pack", viewerToken)).statusCode).toBe(403);
+      expect(data<unknown[]>(await call("GET", "/broker-packs", otherToken))).toEqual([]);
+    });
+  });
+
   describe("account deletion removes the records", () => {
     it("deleting the sole owner's account deletes the workspace's console records", async () => {
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { email: "records-del@example.com", name: "Del", organizationName: "Del Org", password: "Correct Horse Battery 123!" } });
