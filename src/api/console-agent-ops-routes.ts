@@ -3,7 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { Organization } from "../domain/types.js";
 import type { AtlasCertificate } from "../governance/gateway.js";
-import { notFound } from "../shared/errors.js";
+import { AppError, notFound } from "../shared/errors.js";
 import { recordReceipt } from "../evidence/receipts.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 import { agentIdSchema, sha256Hex } from "./console-records-routes.js";
@@ -167,5 +167,63 @@ export const consoleAgentOpsRoutes: FastifyPluginAsync = async (app) => {
     const organization = await workspace(request);
     const rows = await app.store.listConsoleRecords(organization.id, "gate");
     return success(request, rows.slice(-200).map((r) => r.data).reverse());
+  });
+
+  // ---------- BM-41 approval inbox ----------
+  // High-impact (or unverifiable) actions wait here for a named human. An admin who is NOT the person or integration
+  // account that asked approves or declines with a note; the decision becomes a signed "action-approval" receipt with
+  // the approver's name, role and the time. Requests expire after 24 hours (expired never counts as approved). The
+  // integration polls GET /action-approvals/:requestId. No email or phone delivery: the inbox is in the console.
+  type ApprovalRequest = {
+    requestId: string; agentId: string; action: string; resource: string; amountUsd: number | null; impact: string; reasons: string[];
+    requestedBy: string; requestedAt: string; expiresAt: string; status: "pending" | "approved" | "declined";
+    decidedBy?: string; decidedByName?: string; decidedAt?: string; noteSha256?: string; receiptSeq?: number | null;
+  };
+  const stateOf = (r: ApprovalRequest, now = Date.now()): ApprovalRequest["status"] | "expired" =>
+    r.status === "pending" && Date.parse(r.expiresAt) <= now ? "expired" : r.status;
+  const view = (r: ApprovalRequest) => ({ ...r, state: stateOf(r) });
+  const requestParams = z.object({ requestId: z.string().uuid() });
+  const decideBody = z.object({ decision: z.enum(["approve", "decline"]), note: z.string().trim().min(3).max(1000) }).strict();
+
+  app.get("/action-approvals", async (request) => {
+    const organization = await workspace(request);
+    const rows = (await app.store.listConsoleRecords(organization.id, "approval-request")).map((r) => view(r.data as ApprovalRequest)).reverse();
+    return success(request, { pending: rows.filter((r) => r.state === "pending").length, requests: rows });
+  });
+
+  app.get("/action-approvals/:requestId", async (request) => {
+    const organization = await workspace(request);
+    const { requestId } = requestParams.parse(request.params);
+    const saved = await app.store.getConsoleRecord(organization.id, "approval-request", requestId);
+    if (!saved) throw notFound("Approval request");
+    return success(request, view(saved.data as ApprovalRequest));
+  });
+
+  app.post("/action-approvals/:requestId/decide", async (request, reply) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { requestId } = requestParams.parse(request.params);
+    const input = decideBody.parse(request.body);
+    const saved = await app.store.getConsoleRecord(organization.id, "approval-request", requestId);
+    if (!saved) throw notFound("Approval request");
+    const current = saved.data as ApprovalRequest;
+    const state = stateOf(current);
+    if (state === "expired") throw new AppError(409, "REQUEST_EXPIRED", "This request expired (24 hours) and cannot be approved. Ask again from the gate.");
+    if (state !== "pending") throw new AppError(409, "ALREADY_DECIDED", `This request was already ${state}.`);
+    const approver = actor(request);
+    if (approver.userId === current.requestedBy) throw new AppError(403, "SELF_APPROVAL", "The person or integration that asked cannot approve its own request. Another admin must decide.");
+    const user = await app.store.getUser(approver.userId);
+    const decidedAt = new Date().toISOString();
+    const status = input.decision === "approve" ? "approved" : "declined";
+    const noteSha256 = sha256Hex(input.note);
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "action-approval", subject: { kind: "approval-request", id: requestId },
+      facts: { decision: status, approverUserId: approver.userId, approverName: user?.name ?? null, approverRole: approver.role, decidedAt, agentId: current.agentId, action: current.action, amountUsd: current.amountUsd, impact: current.impact, requestedAt: current.requestedAt, noteSha256 },
+    }, request.log);
+    if (!receipt) throw new AppError(503, "RECEIPT_FAILED", "The signed record could not be written, so the decision was not saved. Try again.");
+    const updated: ApprovalRequest = { ...current, status, decidedBy: approver.userId, decidedByName: user?.name ?? undefined, decidedAt, noteSha256, receiptSeq: receipt.seq };
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "approval-request", key: requestId, data: { ...updated, note: input.note } });
+    await audit(app.store, request, "organization", organization.id, "console.action_approval_decided", { requestId, decision: status });
+    return reply.code(200).send(success(request, view(updated)));
   });
 };

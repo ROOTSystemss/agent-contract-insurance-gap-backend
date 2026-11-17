@@ -105,4 +105,62 @@ describe("agent operations on the console", () => {
       expect(text).toContain("gate-decision");
     });
   });
+
+  describe("BM-41 approval inbox", () => {
+    let secondAdminToken: string;
+    let requestId: string;
+    type Req = { requestId: string; state: string; status: string; decidedByName?: string; receiptSeq?: number | null };
+    beforeAll(async () => {
+      const added = data<{ temporaryPassword: string }>(await call("POST", "/team", ownerToken, { name: "Second Admin", email: "ops-second-admin@example.com", role: "admin" }));
+      secondAdminToken = (JSON.parse((await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "ops-second-admin@example.com", password: added.temporaryPassword } })).payload) as { data: { accessToken: string } }).data.accessToken;
+      requestId = data<Check>(await call("POST", "/gates/check", ownerToken, { agentId: "pay-bot", action: "invoices:pay", resource: "INV-77", amountUsd: 400 })).requestId!;
+    });
+
+    it("lists the pending request; the integration can poll it", async () => {
+      const inbox = data<{ pending: number; requests: Req[] }>(await call("GET", "/action-approvals", ownerToken));
+      expect(inbox.pending).toBeGreaterThanOrEqual(1);
+      expect(inbox.requests.some((r) => r.requestId === requestId && r.state === "pending")).toBe(true);
+      expect(data<Req>(await call("GET", `/action-approvals/${requestId}`, ownerToken)).state).toBe("pending");
+    });
+
+    it("the asker cannot approve its own request; viewers cannot decide; a note is required", async () => {
+      expect((await call("POST", `/action-approvals/${requestId}/decide`, ownerToken, { decision: "approve", note: "self" })).statusCode).toBe(403);
+      expect((await call("POST", `/action-approvals/${requestId}/decide`, viewerToken, { decision: "approve", note: "viewer" })).statusCode).toBe(403);
+      expect((await call("POST", `/action-approvals/${requestId}/decide`, secondAdminToken, { decision: "approve", note: "" })).statusCode).toBe(400);
+    });
+
+    it("a named second admin approves: signed receipt with name and time; /verify passes, changed copy fails; once only", async () => {
+      const res = await call("POST", `/action-approvals/${requestId}/decide`, secondAdminToken, { decision: "approve", note: "Checked INV-77 with the vendor by phone." });
+      expect(res.statusCode).toBe(200);
+      expect(data<Req>(res)).toMatchObject({ state: "approved", decidedByName: "Second Admin" });
+      const signed = (await receiptsOf("action-approval")).at(-1)!;
+      expect((signed.receipt.facts as Record<string, unknown>)).toMatchObject({ decision: "approved", approverName: "Second Admin", approverRole: "admin", action: "invoices:pay" });
+      expect(JSON.stringify(signed.receipt)).not.toContain("Checked INV-77");
+      expect((await publicVerify(signed.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify({ ...signed.receipt, facts: { ...(signed.receipt.facts as object), decision: "declined" } })).verdict).toBe("FAIL");
+      expect((await call("POST", `/action-approvals/${requestId}/decide`, secondAdminToken, { decision: "decline", note: "again" })).statusCode).toBe(409);
+      expect(data<Req>(await call("GET", `/action-approvals/${requestId}`, ownerToken)).state).toBe("approved");
+    });
+
+    it("an expired request can never be approved", async () => {
+      const id = data<Check>(await call("POST", "/gates/check", ownerToken, { agentId: "pay-bot", action: "invoices:pay", amountUsd: 450 })).requestId!;
+      const all = await call("GET", "/action-approvals", ownerToken);
+      const req = data<{ requests: Array<Req & { expiresAt: string }> }>(all).requests.find((r) => r.requestId === id)!;
+      expect(req.state).toBe("pending");
+      // Age the request past its 24-hour window directly in the store.
+      const owner = JSON.parse((await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { authorization: `Bearer ${ownerToken}` } })).payload) as { data: { organization?: { id: string }; organizations?: Array<{ id: string }> } };
+      const workspaceId = owner.data.organization?.id ?? owner.data.organizations?.[0]?.id;
+      const saved = await store.getConsoleRecord(workspaceId!, "approval-request", id);
+      await store.saveConsoleRecord({ organizationId: workspaceId!, kind: "approval-request", key: id, data: { ...(saved!.data as object), expiresAt: new Date(Date.now() - 1000).toISOString() } });
+      expect(data<Req>(await call("GET", `/action-approvals/${id}`, ownerToken)).state).toBe("expired");
+      const late = await call("POST", `/action-approvals/${id}/decide`, secondAdminToken, { decision: "approve", note: "too late" });
+      expect(late.statusCode).toBe(409);
+    });
+
+    it("another workspace cannot see or decide this workspace's requests", async () => {
+      expect((await call("GET", `/action-approvals/${requestId}`, otherToken)).statusCode).toBe(404);
+      expect((await call("POST", `/action-approvals/${requestId}/decide`, otherToken, { decision: "decline", note: "not mine" })).statusCode).toBe(404);
+      expect(data<{ requests: unknown[] }>(await call("GET", "/action-approvals", otherToken)).requests).toEqual([]);
+    });
+  });
 });
