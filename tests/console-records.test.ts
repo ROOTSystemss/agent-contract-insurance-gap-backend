@@ -326,6 +326,50 @@ describe("console governance records", () => {
     });
   });
 
+  describe("BM-43 monthly agent statement", () => {
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const verifyDoc = async (body: { pack: unknown; contentHash: string; signature: { value: string; publicKey: string } }) =>
+      data<{ kind: string; verdict: string }>(await app.inject({ method: "POST", url: "/api/v1/public/verify", payload: { pack: body.pack, contentHash: body.contentHash, signature: { value: body.signature.value, publicKey: body.signature.publicKey } } }));
+
+    it("counts each agent's allowed and blocked actions for the month, lists approvals by role, and is signed", async () => {
+      const now = new Date().toISOString();
+      const lastYear = new Date(Date.now() - 400 * 864e5).toISOString();
+      fakes.addAction("email-bot", "within_authority", lastYear, 10); // older than the month: makes the read complete and must not count
+      fakes.addAction("email-bot", "within_authority", now, 120);
+      fakes.addAction("email-bot", "within_authority", now, 80);
+      fakes.addAction("email-bot", "outside_authority", now, 900);
+      const res = await call("POST", "/statements", ownerToken, { month: thisMonth });
+      expect(res.statusCode).toBe(201);
+      const signed = data<{ pack: Record<string, any>; contentHash: string; signature: { value: string; publicKey: string } }>(res);
+      expect(signed.pack.schema).toBe("rootsystems.agent-monthly-statement.v1");
+      expect(signed.pack.ledger).toEqual({ source: "action-ledger", completeness: "complete for this month" });
+      const email = signed.pack.agents.find((a: { agentId: string }) => a.agentId === "email-bot");
+      expect(email.actions).toMatchObject({ total: 3, allowed: 2, blocked: 1, blockedReasons: { over_limit: 1 }, allowedAmountUsd: 200 });
+      const invoice = signed.pack.agents.find((a: { agentId: string }) => a.agentId === "invoice-bot");
+      expect(invoice.killSwitch).toEqual(["stopped"]);
+      expect(invoice.incidents).toBe(1);
+      expect(signed.pack.certificates.issued).toBeGreaterThanOrEqual(2);
+      expect(JSON.stringify(signed.pack)).not.toMatch(/@example\.com/);
+      expect(await verifyDoc(signed)).toMatchObject({ kind: "monthly-statement", verdict: "PASS" });
+      expect((await verifyDoc({ ...signed, pack: { ...signed.pack, month: "2020-01" } })).verdict).toBe("FAIL");
+      expect((await receipts()).receipts.some((r) => r.type === "agent-statement-issued")).toBe(true);
+      expect(data<Array<{ month: string }>>(await call("GET", "/statements", ownerToken))[0]!.month).toBe(thisMonth);
+    });
+
+    it("an unreadable ledger reads 'not verified', never zero; future months and viewers refused", async () => {
+      fakes.state.ledgerDown = true;
+      let signed: { pack: Record<string, any> };
+      try { signed = data(await call("POST", "/statements", ownerToken, { month: thisMonth })); } finally { fakes.state.ledgerDown = false; }
+      expect(signed.pack.ledger).toEqual({ source: "not-verified", completeness: "not verified" });
+      expect(signed.pack.agents.every((a: { actions: unknown }) => a.actions === "not verified")).toBe(true);
+      const next = new Date(); next.setUTCMonth(next.getUTCMonth() + 2);
+      expect((await call("POST", "/statements", ownerToken, { month: next.toISOString().slice(0, 7) })).statusCode).toBe(400);
+      expect((await call("POST", "/statements", ownerToken, { month: "2026-13" })).statusCode).toBe(400);
+      expect((await call("POST", "/statements", viewerToken, { month: thisMonth })).statusCode).toBe(403);
+      expect(data<unknown[]>(await call("GET", "/statements", otherToken))).toEqual([]);
+    });
+  });
+
   describe("account deletion removes the records", () => {
     it("deleting the sole owner's account deletes the workspace's console records", async () => {
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { email: "records-del@example.com", name: "Del", organizationName: "Del Org", password: "Correct Horse Battery 123!" } });

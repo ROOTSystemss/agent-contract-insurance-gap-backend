@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { AppError, notFound } from "../shared/errors.js";
 import { POLICY_TEMPLATES } from "../governance/policy-templates.js";
 import { checkChain, recordReceipt } from "../evidence/receipts.js";
-import { BROKER_PACK_SCHEMA, signDocument } from "../reports/signed-document.js";
+import { BROKER_PACK_SCHEMA, MONTHLY_STATEMENT_SCHEMA, signDocument } from "../reports/signed-document.js";
 import { CANONICAL_DISCLAIMER } from "../shared/disclaimer.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 
@@ -502,6 +502,95 @@ export const consoleRecordsRoutes: FastifyPluginAsync = async (app) => {
     const organization = await workspace(request);
     const rows = await app.store.listConsoleRecords(organization.id, "kill");
     return success(request, { scope: KILL_SCOPE, events: rows.map((r) => ({ id: r.key, ...r.data })).reverse() });
+  });
+
+  // ---------- BM-43 monthly agent statement ----------
+  // For one calendar month (UTC): what each agent did (from the Action Ledger), what was blocked and why, approvals
+  // signed or declined, certificates issued and revoked, re-certifications, incidents and kill-switch uses. Signed in
+  // the same format as the broker pack. When the ledger cannot be read the statement says "not verified"; when the
+  // ledger returned only part of the month it says the counts are a sample, never presents them as complete.
+  const monthBody = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Month as YYYY-MM, for example 2026-10.") }).strict();
+  const LEDGER_READ_LIMIT = 1000;
+
+  app.post("/statements", async (request, reply) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    const { month } = monthBody.parse(request.body);
+    const start = Date.parse(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+    if (start > Date.now()) throw new AppError(400, "VALIDATION_ERROR", "That month has not started yet.");
+    const inMonth = (iso: unknown) => typeof iso === "string" && Date.parse(iso) >= start && Date.parse(iso) < end.getTime();
+
+    let ledger: { source: "action-ledger" | "not-verified" | "not-activated"; complete: boolean; actions: Array<{ agentId: string; verdict: string; reasons?: string[]; amountUsd?: number | null; occurredAt: string }> };
+    if (!app.governance.status().trustProof || !(await app.store.getServiceLink(organization.id))) ledger = { source: "not-activated", complete: false, actions: [] };
+    else {
+      try {
+        const read = await app.governance.ledger(organization, { limit: LEDGER_READ_LIMIT });
+        const sorted = [...read.actions].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+        // Complete for this month only if everything was returned, or the oldest returned action is older than the month.
+        const complete = read.actions.length >= read.count || (sorted[0] !== undefined && Date.parse(sorted[0].occurredAt) < start);
+        ledger = { source: "action-ledger", complete, actions: read.actions.filter((a) => inMonth(a.occurredAt)) };
+      } catch (error) {
+        request.log.warn({ err: (error as Error).message }, "statement: action ledger could not be read");
+        ledger = { source: "not-verified", complete: false, actions: [] };
+      }
+    }
+    const [{ agents }, receiptRecords, recerts, incidents, kills, members] = await Promise.all([
+      inventory(organization),
+      app.store.listReceipts(organization.id),
+      app.store.listConsoleRecords(organization.id, "recert"),
+      app.store.listConsoleRecords(organization.id, "incident"),
+      app.store.listConsoleRecords(organization.id, "kill"),
+      app.store.listMembers(organization.id),
+    ]);
+    const monthReceipts = receiptRecords.map((r) => r.receipt as { type?: string; issuedAt?: string; subject?: { id?: string } | null; facts?: Record<string, unknown> }).filter((r) => inMonth(r.issuedAt));
+    const roleOf = (userId: unknown) => members.find((m) => m.userId === userId)?.role ?? "former member";
+    const agentIds = new Set<string>([...agents.map((a) => a.agentId), ...ledger.actions.map((a) => a.agentId)]);
+    const perAgent = [...agentIds].sort().map((agentId) => {
+      const acts = ledger.actions.filter((a) => a.agentId === agentId);
+      const blocked = acts.filter((a) => a.verdict === "outside_authority");
+      const reasons: Record<string, number> = {};
+      for (const a of blocked) for (const r of a.reasons ?? []) reasons[r] = (reasons[r] ?? 0) + 1;
+      return {
+        agentId,
+        name: agents.find((a) => a.agentId === agentId)?.name ?? agentId,
+        actions: ledger.source === "action-ledger" ? { total: acts.length, allowed: acts.length - blocked.length, blocked: blocked.length, blockedReasons: reasons, allowedAmountUsd: acts.filter((a) => a.verdict !== "outside_authority").reduce((sum, a) => sum + (a.amountUsd ?? 0), 0) } : "not verified",
+        recertifications: recerts.filter((r) => (r.data as { agentId?: string }).agentId === agentId && inMonth((r.data as { at?: string }).at)).map((r) => ({ decision: (r.data as { decision?: string }).decision, by: roleOf((r.data as { reviewerUserId?: string }).reviewerUserId) })),
+        incidents: incidents.filter((i) => (i.data as { agentId?: string }).agentId === agentId && inMonth((i.data as { occurredAt?: string }).occurredAt)).length,
+        killSwitch: kills.filter((k) => (k.data as { agentId?: string }).agentId === agentId && inMonth((k.data as { at?: string }).at)).map((k) => (k.data as { outcome?: string }).outcome),
+      };
+    });
+    const doc = {
+      schema: MONTHLY_STATEMENT_SCHEMA,
+      month,
+      generatedAt: new Date().toISOString(),
+      workspace: { name: organization.name },
+      ledger: {
+        source: ledger.source,
+        completeness: ledger.source !== "action-ledger" ? "not verified" : ledger.complete ? "complete for this month" : `sample: only the latest ${LEDGER_READ_LIMIT} actions were readable, so counts may be low`,
+      },
+      agents: perAgent,
+      approvals: monthReceipts.filter((r) => r.type === "approval-signed" || r.type === "approval-declined").map((r) => ({ decisionId: r.subject?.id ?? null, outcome: r.type === "approval-signed" ? "signed" : "declined", by: roleOf(r.facts?.signerUserId), at: r.issuedAt })),
+      certificates: { issued: monthReceipts.filter((r) => r.type === "certificate-issued").length, revoked: monthReceipts.filter((r) => r.type === "certificate-revoked").length },
+      limitations: [
+        "Action counts come from the Action Ledger as reported by the agent runtime; actions a runtime never reported are not in it.",
+        "Approvals, certificates, re-certifications, incidents and kill-switch uses come from this workspace's signed receipts and records.",
+        "People appear by role only.",
+      ],
+      disclaimer: "Decision support only. Not legal or insurance advice.",
+    };
+    const signed = signDocument(doc, app.pqSigner);
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "statement", key: `${month}:${doc.generatedAt}`, data: { month, generatedAt: doc.generatedAt, contentHash: signed.contentHash, ledger: doc.ledger.completeness } });
+    await audit(app.store, request, "organization", organization.id, "console.agent_statement_issued", { month });
+    await recordReceipt(app.store, app.pqSigner, { orgId: organization.id, type: "agent-statement-issued", subject: { kind: "statement", id: month }, facts: { month, contentHash: signed.contentHash, ledger: ledger.source, complete: ledger.complete } }, request.log);
+    reply.header("Cache-Control", "no-store");
+    return reply.code(201).send(success(request, signed));
+  });
+
+  app.get("/statements", async (request) => {
+    const organization = await workspace(request);
+    const rows = await app.store.listConsoleRecords(organization.id, "statement");
+    return success(request, rows.map((r) => r.data).reverse());
   });
 
   app.delete("/agents/:agentId", async (request) => {

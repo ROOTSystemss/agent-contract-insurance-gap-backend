@@ -33,7 +33,7 @@ export interface FakeAction {
 export function governanceFakes() {
   const certs: FakeCert[] = [];
   const actions: FakeAction[] = [];
-  const state = { atlasDown: false, revokeFails: false };
+  const state = { atlasDown: false, revokeFails: false, ledgerDown: false };
   const json = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
     new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
@@ -77,6 +77,7 @@ export function governanceFakes() {
     if (url.host === "tp.test") {
       if (url.pathname === "/auth/signup") return json(201, { ok: true }, { "set-cookie": "sid=abc; Path=/; HttpOnly" });
       if (url.pathname === "/api-keys") return json(201, { key: "rs_test_key" });
+      if (url.pathname === "/api/v1/agent-actions" && state.ledgerDown) return json(500, { error: "unavailable" });
       if (url.pathname === "/api/v1/agent-actions") {
         const agentId = url.searchParams.get("agentId");
         const limit = Number(url.searchParams.get("limit") ?? 200);

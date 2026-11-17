@@ -996,6 +996,31 @@
     load();
   });
 
+  // BM-43 monthly agent statement
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Monthly agent statement", "For one month: what each agent did, what was blocked and why, who approved (by role), certificates, re-certifications, incidents and kill-switch uses. Signed; check it on the public /verify page.");
+    content.appendChild(p.panel);
+    var month = h("input", { class: "input", type: "month", "aria-label": "Month" });
+    month.value = new Date().toISOString().slice(0, 7);
+    var list = h("ul", { class: "faint", style: "font-size:12.5px" });
+    p.body.appendChild(field("Month", month, "Calendar month in UTC. If the ledger cannot be read the statement says 'not verified' instead of showing zero."));
+    p.body.appendChild(h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+      api("/console/statements", { method: "POST", body: { month: month.value } }).then(function (signed) {
+        var blob = new Blob([JSON.stringify(signed, null, 2)], { type: "application/json" });
+        var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "agent-statement-" + signed.pack.month + ".json"; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+        toast("Statement signed and downloaded (" + signed.pack.ledger.completeness + ")"); load();
+      }).catch(function (err) { toast(err.message, true); });
+    } }, "Make and download the signed statement"));
+    p.body.appendChild(list);
+    function load() {
+      api("/console/statements").then(function (rows) {
+        clear(list);
+        rows.slice(0, 6).forEach(function (r) { list.appendChild(h("li", { text: r.month + " - made " + r.generatedAt.slice(0, 10) + " - ledger: " + r.ledger + " - fingerprint " + r.contentHash.slice(0, 16) + "..." })); });
+      }).catch(function () {});
+    }
+    load();
+  });
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {
