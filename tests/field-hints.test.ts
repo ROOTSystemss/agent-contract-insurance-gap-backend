@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const app = readFileSync(join(process.cwd(), "public", "app.js"), "utf8");
+// Capability hints moved to agent-profile.js (shared with the N-AT-04 wizard); read both.
+const app = readFileSync(join(process.cwd(), "public", "app.js"), "utf8") + "\n" + readFileSync(join(process.cwd(), "public", "agent-profile.js"), "utf8");
 
 describe("agent profile field hints", () => {
   const fields = ["agentType", "primaryJurisdiction", "deploymentCountries", "affectedCountries", "autonomyLevel", "humanOversightLevel", "reversibility", "loggingLevel", "perTransactionLimit", "aggregateSpendingLimit", "approvalThresholds", "emergencyStopMechanism", "incidentResponseOwner"];

@@ -558,45 +558,12 @@ function openProjectModal(prefill = {}) {
   });
 }
 
-// Plain-English hints for the capabilities buyers find unclear (Max Additions AD-072, 2026-11-13).
-const capabilityHints = {
-  canMakeRepresentations: "Tells customers things on your behalf, such as prices, promises or facts about a product.",
-  canAcceptTerms: "Clicks \"I agree\" or accepts conditions for your company.",
-  canExecuteTransactions: "Completes an order, booking, transfer or refund itself, not just a draft.",
-  canEnterContracts: "Signs or agrees to a contract for your company.",
-  canAccessSensitivePersonalData: "Health, financial, ID numbers, or similar special data about people.",
-  canAccessRegulatedData: "Data a law controls, such as patient records (HIPAA) or card numbers (PCI).",
-  canCreateIntellectualProperty: "Writes text, code or designs your company will own or publish.",
-  canDelegateToSubAgents: "Hands tasks to other AI agents or bots.",
-  canControlInfrastructure: "Changes servers, cloud settings or networks.",
-};
-const capabilityFields = [
-  ["canCommunicateExternally", "Communicate externally"],
-  ["canMakeRepresentations", "Make representations"],
-  ["canAcceptTerms", "Accept terms"],
-  ["canExecuteTransactions", "Execute transactions"],
-  ["canSpendMoney", "Spend money"],
-  ["canIssueRefundsOrCredits", "Issue refunds or credits"],
-  ["canChangePrices", "Change prices"],
-  ["canEnterContracts", "Enter contracts"],
-  ["canApproveOrRejectPeople", "Approve or reject people"],
-  ["canApproveOrRejectVendors", "Approve or reject vendors"],
-  ["canAccessPersonalData", "Access personal data"],
-  ["canAccessSensitivePersonalData", "Access sensitive personal data"],
-  ["canAccessConfidentialBusinessData", "Access confidential business data"],
-  ["canAccessRegulatedData", "Access regulated data"],
-  ["canModifyOrDeleteData", "Modify or delete data"],
-  ["canCreateIntellectualProperty", "Create intellectual property"],
-  ["canPublishContent", "Publish content"],
-  ["canDeployCode", "Deploy code"],
-  ["canControlInfrastructure", "Control infrastructure"],
-  ["canHireOrTerminateWorkers", "Hire or terminate workers"],
-  ["canDelegateToSubAgents", "Delegate to sub-agents"],
-];
+// Capability list, hints and the payload builder live in agent-profile.js, shared with the wizard (N-AT-04).
+const { capabilityHints, capabilityFields } = window.AgentProfile;
 
 function renderAgent() {
   const agent = state.agents[0] || {};
-  shell(`${pageHeader("Contract & Insurance Gap · part 1 of 3", agent.id ? "Agent authority profile" : "Describe the agent", "Capture what the system can actually do. Precise capability boundaries make the comparison more useful.", agent.id ? '<span class="badge badge-green">Profile saved</span>' : '<button type="button" class="button button-secondary" data-fill-example>Fill example profile</button>')}
+  shell(`${pageHeader("Contract & Insurance Gap · part 1 of 3", agent.id ? "Agent authority profile" : "Describe the agent", "Capture what the system can actually do. Precise capability boundaries make the comparison more useful.", (agent.id ? '<span class="badge badge-green">Profile saved</span> ' : '<button type="button" class="button button-secondary" data-fill-example>Fill example profile</button> ') + '<button type="button" class="button button-secondary" data-agent-wizard>Answer step by step</button>')}
     <div class="progress-track"><i class="progress-step done"></i><i class="progress-step"></i><i class="progress-step"></i></div>
     <form id="agent-form" class="card form-card">
       <section class="form-section"><div class="form-section-title"><span class="section-number">01</span><div><h3>Identity and deployment</h3><p>Basic operating context for this agent.</p></div></div>
@@ -641,9 +608,91 @@ function renderAgent() {
     </form>${agent.id ? '<section id="authority-certificate" class="card authority-card" aria-label="Authority certificate"></section>' : ""}`);
   document.querySelector("#agent-form").addEventListener("submit", submitAgent);
   document.querySelector("[data-fill-example]")?.addEventListener("click", fillExampleAgent);
+  document.querySelector("[data-agent-wizard]")?.addEventListener("click", () => { wizardAnswers = null; renderAgentWizard(0); });
   if (agent.id) window.mountCertificatePanel?.(agent);
 }
 
+// N-AT-04 (knock-out 2026-11-17): the same profile as the form, one plain-English question per step, then a review
+// page. Answers live in wizardAnswers until saved; saving uses the same builder and API as the form.
+let wizardAnswers = null;
+function wizardDefaults(agent) {
+  const a = {
+    name: agent.name || "", businessPurpose: agent.businessPurpose || "", agentType: agent.agentType || "Task-oriented AI agent",
+    deploymentStatus: agent.deploymentStatus || "pilot", operatorOrganization: agent.operatorOrganization || state.me.organization.name,
+    developerProvider: agent.developerProvider || "", primaryJurisdiction: agent.primaryJurisdiction || state.project.primaryCountryCode,
+    deploymentCountries: (agent.deploymentCountries || [state.project.primaryCountryCode]).join(", "),
+    affectedCountries: (agent.affectedCountries || state.project.affectedCountryCodes || []).join(", "),
+    systemsAccessed: (agent.systemsAccessed || []).join(", "), thirdPartyToolsUsed: (agent.thirdPartyToolsUsed || []).join(", "),
+    perTransactionLimit: agent.perTransactionLimit ?? "", aggregateSpendingLimit: agent.aggregateSpendingLimit ?? "", currency: agent.currency || "USD",
+    autonomyLevel: String(agent.autonomyLevel ?? 2), humanOversightLevel: agent.humanOversightLevel || "threshold_approval",
+    approvalThresholds: (agent.approvalThresholds || []).join(", "), reversibility: agent.reversibility || "partially_reversible",
+    loggingLevel: agent.loggingLevel || "detailed", emergencyStopMechanism: agent.emergencyStopMechanism || "",
+    incidentResponseOwner: agent.incidentResponseOwner || "", knownLimitations: (agent.knownLimitations || []).join("\n"), notes: agent.notes || "",
+  };
+  capabilityFields.forEach(([name]) => { a[name] = agent[name] === true; });
+  return a;
+}
+function wizardField([name, label, kind], answers) {
+  const id = "wiz-" + name, value = answers[name] ?? "";
+  if (kind === "checkbox") return `<label class="toggle"${capabilityHints[name] ? ` title="${escapeHtml(capabilityHints[name])}"` : ""}><input type="checkbox" name="${name}" ${answers[name] ? "checked" : ""} /><span>${escapeHtml(label)}${capabilityHints[name] ? `<small class="field-hint" style="display:block">${escapeHtml(capabilityHints[name])}</small>` : ""}</span></label>`;
+  if (kind.startsWith("select:")) return `<div class="field full"><label for="${id}">${escapeHtml(label)}</label><select id="${id}" name="${name}">${kind.slice(7).split(",").map((o) => `<option value="${o}" ${String(value) === o ? "selected" : ""}>${pretty(o)}</option>`).join("")}</select></div>`;
+  if (kind === "textarea") return `<div class="field full"><label for="${id}">${escapeHtml(label)}</label><textarea id="${id}" name="${name}">${escapeHtml(String(value))}</textarea></div>`;
+  return `<div class="field full"><label for="${id}">${escapeHtml(label)}</label><input id="${id}" name="${name}" type="${kind === "number" ? "number" : "text"}"${kind === "number" ? ' min="0"' : ""} value="${escapeHtml(String(value))}" /></div>`;
+}
+function readWizardStep(form, step) {
+  step.fields.forEach(([name, , kind]) => { wizardAnswers[name] = kind === "checkbox" ? form.elements[name].checked : form.elements[name].value; });
+}
+function renderAgentWizard(index) {
+  const agent = state.agents[0] || {};
+  if (!wizardAnswers) wizardAnswers = wizardDefaults(agent);
+  const steps = window.AgentProfile.WIZARD_STEPS;
+  const total = steps.length + 1;
+  if (index >= steps.length) return renderAgentWizardReview();
+  const step = steps[index];
+  const grid = step.id === "actions" ? `<div class="toggle-grid">${step.fields.filter((f) => f[2] === "checkbox").map((f) => wizardField(f, wizardAnswers)).join("")}</div><div class="field-grid">${step.fields.filter((f) => f[2] !== "checkbox").map((f) => wizardField(f, wizardAnswers)).join("")}</div>` : `<div class="field-grid">${step.fields.map((f) => wizardField(f, wizardAnswers)).join("")}</div>`;
+  shell(`${pageHeader("Describe the agent · step " + (index + 1) + " of " + total, escapeHtml(step.title), escapeHtml(step.help), '<button type="button" class="button button-secondary" data-wizard-exit>Use the full form instead</button>')}
+    <form id="agent-wizard" class="card form-card" data-step="${step.id}">${grid}
+      <p id="wizard-message" class="form-message" role="alert"></p>
+      <div class="form-actions">${index > 0 ? '<button type="button" class="button button-secondary" data-wizard-back>← Back</button>' : ""}<button type="submit" class="button button-primary">Next →</button></div>
+    </form>`);
+  const form = document.querySelector("#agent-wizard");
+  document.querySelector("[data-wizard-exit]").addEventListener("click", () => { wizardAnswers = null; renderAgent(); });
+  form.querySelector("[data-wizard-back]")?.addEventListener("click", () => { readWizardStep(form, step); renderAgentWizard(index - 1); });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    readWizardStep(form, step);
+    const problem = window.AgentProfile.wizardCheck(index, wizardAnswers);
+    if (problem) { form.querySelector("#wizard-message").textContent = problem; return; }
+    renderAgentWizard(index + 1);
+  });
+}
+function renderAgentWizardReview() {
+  const steps = window.AgentProfile.WIZARD_STEPS;
+  const shown = (name, kind) => (kind === "checkbox" ? (wizardAnswers[name] ? "Yes" : "No") : String(wizardAnswers[name] ?? "").trim() || "—");
+  const rows = steps.map((step, i) => `<section class="form-section"><div class="form-section-title"><span class="section-number">${String(i + 1).padStart(2, "0")}</span><div><h3>${escapeHtml(step.title)}</h3></div><button type="button" class="button button-secondary" data-wizard-edit="${i}">Change</button></div><dl class="review-list">${step.fields.filter(([name, , kind]) => kind !== "checkbox" || wizardAnswers[name]).map(([name, label, kind]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(shown(name, kind))}</dd>`).join("")}</dl></section>`).join("");
+  shell(`${pageHeader("Describe the agent · review", "Check your answers", "This is decision support, not legal or insurance advice. Nothing is saved until you press Save.", "")}
+    <div id="agent-wizard-review" class="card form-card">${rows}
+      <p id="wizard-message" class="form-message" role="alert"></p>
+      <div class="form-actions"><button type="button" class="button button-secondary" data-wizard-back>← Back</button><button type="button" class="button button-primary" data-wizard-save>Save profile</button></div>
+    </div>`);
+  document.querySelectorAll("[data-wizard-edit]").forEach((b) => b.addEventListener("click", () => renderAgentWizard(Number(b.dataset.wizardEdit))));
+  document.querySelector("[data-wizard-back]").addEventListener("click", () => renderAgentWizard(steps.length - 1));
+  document.querySelector("[data-wizard-save]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const existing = state.agents[0];
+      const saved = await api(existing ? `/agents/${existing.id}` : `/projects/${state.project.id}/agents`, { method: existing ? "PATCH" : "POST", body: JSON.stringify(window.AgentProfile.buildAgentPayload(wizardAnswers)) });
+      state.agents = [saved];
+      wizardAnswers = null;
+      toast(existing ? "Agent profile updated." : "Agent profile saved. Now add the evidence.");
+      if (!existing) await navigate("evidence"); else renderAgent();
+    } catch (error) {
+      document.querySelector("#wizard-message").textContent = error.message;
+      button.disabled = false;
+    }
+  });
+}
 function fillExampleAgent() {
   const form = document.querySelector("#agent-form");
   const values = {
@@ -700,47 +749,9 @@ async function submitAgent(event) {
   const values = formDataObject(form);
   const submit = form.querySelector("button[type=submit]");
   submit.disabled = true;
-  const payload = {
-    name: values.name,
-    deploymentStatus: values.deploymentStatus,
-    businessPurpose: values.businessPurpose,
-    operatorOrganization: values.operatorOrganization,
-    developerProvider: values.developerProvider || undefined,
-    deploymentCountries: commaList(values.deploymentCountries).map((v) => v.toUpperCase()),
-    affectedCountries: commaList(values.affectedCountries).map((v) => v.toUpperCase()),
-    primaryJurisdiction: values.primaryJurisdiction.toUpperCase(),
-    jurisdictionSubdivisions: [],
-    agentType: values.agentType,
-    autonomyLevel: Number(values.autonomyLevel),
-    humanOversightLevel: values.humanOversightLevel,
-    perTransactionLimit:
-      values.perTransactionLimit === "" ? undefined : Number(values.perTransactionLimit),
-    aggregateSpendingLimit:
-      values.aggregateSpendingLimit === "" ? undefined : Number(values.aggregateSpendingLimit),
-    currency: values.currency ? values.currency.toUpperCase() : undefined,
-    reversibility: values.reversibility,
-    loggingLevel: values.loggingLevel,
-    approvalThresholds: commaList(values.approvalThresholds),
-    thirdPartyToolsUsed: commaList(values.thirdPartyToolsUsed),
-    systemsAccessed: commaList(values.systemsAccessed),
-    emergencyStopMechanism: values.emergencyStopMechanism || undefined,
-    incidentResponseOwner: values.incidentResponseOwner || undefined,
-    knownLimitations: values.knownLimitations
-      ? values.knownLimitations
-          .split("\n")
-          .map((v) => v.trim())
-          .filter(Boolean)
-      : [],
-    notes: values.notes || undefined,
-  };
-  capabilityFields.forEach(([name]) => {
-    payload[name] = form.elements[name].checked;
-  });
-  if (!payload.canSpendMoney) {
-    delete payload.perTransactionLimit;
-    delete payload.aggregateSpendingLimit;
-    delete payload.currency;
-  }
+  const answers = { ...values };
+  capabilityFields.forEach(([name]) => { answers[name] = form.elements[name].checked; });
+  const payload = window.AgentProfile.buildAgentPayload(answers);
   try {
     const existing = state.agents[0];
     const saved = await api(
