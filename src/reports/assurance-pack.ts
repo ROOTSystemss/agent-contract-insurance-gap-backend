@@ -46,6 +46,9 @@ export interface AssurancePackInput {
   documents: DocumentRecord[];
   certificate?: Reconciliation | null;
   now?: Date;
+  // Public SAMPLE pack only (reports/sample-pack.ts): marks the pack as a sample INSIDE the hashed and signed
+  // content, so it can never pass as a real one. Absent for real packs (their bytes are unchanged).
+  sample?: { notice: string };
 }
 
 export function buildAssurancePack(input: AssurancePackInput, signer: PqSigner | null = null) {
@@ -55,6 +58,7 @@ export function buildAssurancePack(input: AssurancePackInput, signer: PqSigner |
 
   const pack = {
     schema: ASSURANCE_PACK_SCHEMA,
+    ...(input.sample ? { sample: true as const, sampleNotice: input.sample.notice } : {}),
     generatedAt: (input.now ?? new Date()).toISOString(),
     organization: input.organizationName,
     project: input.projectName,

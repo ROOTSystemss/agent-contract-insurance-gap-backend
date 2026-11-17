@@ -4,6 +4,7 @@ import { publishedKeys } from "../crypto/key-history.js";
 import { verifyWithPublicKey } from "../crypto/pq-sign.js";
 import { verifyOne } from "../evidence/receipts.js";
 import { verifyAssurancePack } from "../reports/assurance-pack.js";
+import { buildSamplePack, SAMPLE_NOTICE } from "../reports/sample-pack.js";
 
 // Public checks, no account: anyone holding an AI Agent Trust Evidence Notary receipt or an Agent
 // Assurance Pack (an auditor, a broker, a customer) can confirm who issued it and that it is unchanged.
@@ -52,13 +53,46 @@ export const publicVerifyRoutes: FastifyPluginAsync = async (app) => {
         : result.signature.status === "not_this_service" ? "The pack is signed, but not by AI Agent Trust's published key."
         : result.signature.status === "signed_after_key_retired" ? "The pack is signed with a retired AI Agent Trust key, after that key was retired."
         : "The signature does not match the pack.";
-      return { data: { kind: "assurance-pack", verdict: result.valid ? "PASS" : "FAIL", reason, signature: result.signature.status, computedHash: result.computedHash } };
+      // A SAMPLE pack says so inside its hashed, signed content; only a valid pack can be reported as a sample.
+      const sample = result.valid && (parsed.pack as { sample?: unknown }).sample === true;
+      return { data: { kind: "assurance-pack", verdict: result.valid ? "PASS" : "FAIL", reason, signature: result.signature.status, computedHash: result.computedHash, ...(sample ? { sample: true, sampleNotice: String((parsed.pack as { sampleNotice?: unknown }).sampleNotice ?? "SAMPLE") } : {}) } };
     }
     return { data: { kind: null, verdict: "FAIL", reason: "Choose a receipt or an Agent Assurance Pack (.json)." } };
   });
 
   app.get("/verify", async (_request, reply) => reply.type("text/html; charset=utf-8").send(PAGE));
+
+  // Public SAMPLE Agent Assurance Pack (knock-out 2026-11-16, O-24): no account; built in memory, never stored.
+  app.get("/sample/assurance-pack.json", async (_request, reply) => {
+    if (!app.pqSigner) return reply.code(503).send({ error: { code: "SAMPLE_UNAVAILABLE", message: "The sample needs this service's signing key, which is not configured here.", details: [], requestId: _request.id } });
+    const s = await buildSamplePack(app.pqSigner);
+    return reply
+      .header("content-disposition", 'attachment; filename="SAMPLE-agent-assurance-pack.json"')
+      .header("cache-control", "public, max-age=300")
+      .header("x-robots-tag", "noindex")
+      .type("application/json; charset=utf-8")
+      .send(JSON.stringify({ pack: s.pack, contentHash: s.contentHash, signature: s.signature }, null, 2));
+  });
+  app.get("/sample", async (_request, reply) => reply.header("x-robots-tag", "noindex").type("text/html; charset=utf-8").send(SAMPLE_PAGE));
 };
+
+const SAMPLE_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample Agent Assurance Pack</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--ink:#16202b;--muted:#5b6876;--line:#dde3ea;--bad:#b42318;--accent:#6d4aff}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141a;--card:#161d25;--ink:#e8edf2;--muted:#9aa7b4;--line:#2a3542;--bad:#ff7a6b;--accent:#a08bff}}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:720px;margin:0 auto;padding:32px 16px}h1{font-size:1.6rem;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+.sample{border:3px solid var(--bad);color:var(--bad);font-weight:700}a{color:var(--accent)}
+</style></head><body><main>
+<h1>Sample Agent Assurance Pack</h1>
+<p class="card sample" id="sample-notice">${SAMPLE_NOTICE}</p>
+<div class="card"><p>An Agent Assurance Pack summarizes what an AI agent is set up to do, what its contracts and insurance documents say about it, and where they may not line up. It holds metadata only (no contract text) and is fingerprinted and signed with AI Agent Trust's published ML-DSA-65 key (NIST FIPS 204).</p>
+<p>This sample was produced by the real review engine from made-up text: an invoice-paying agent allowed to pay up to USD 5,000 per invoice, while its made-up contract requires human approval above USD 1,000, and a made-up insurance summary that does not say whether agent activity is included.</p>
+<p><a href="/sample/assurance-pack.json" id="sample-download" download>Download the SAMPLE pack (.json)</a>, then check it on <a href="/verify">/verify</a>: unchanged it passes and is marked SAMPLE; change one character and it fails.</p></div>
+</main></body></html>`;
 
 const PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -85,6 +119,7 @@ button{margin-top:16px;background:var(--accent);color:#fff;border:0;border-radiu
 <div><button type="submit" id="go">Check</button></div>
 </form>
 <section id="out" class="card" hidden aria-live="polite"></section>
+<p id="sample-link"><small>No pack to hand? Try the <a href="/sample">SAMPLE Agent Assurance Pack</a> (made-up data).</small></p>
 </main><script>
 (function(){
 var esc=function(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});};
@@ -112,6 +147,7 @@ function render(d){
     html+="<dl><dt>Agent</dt><dd>"+esc(d.agentName)+" ("+esc(d.agentId)+")</dd><dt>Organization</dt><dd>"+esc(d.organization)+(d.organizationVerified?"":" <small>(name declared by the issuer, not independently verified)</small>")+"</dd><dt>Allowed to</dt><dd>"+esc((d.permissions||[]).join(", "))+"</dd>"+(limits?"<dt>Limits</dt><dd>"+limits+"</dd>":"")+"<dt>Valid until</dt><dd>"+esc(d.expiresAt)+"</dd></dl>";
   }
   if(pass&&d.kind==="receipt")html+="<dl><dt>Issued by</dt><dd>AI Agent Trust (ML-DSA-65 key "+esc(d.keyId)+")</dd><dt>What</dt><dd>"+esc(d.type)+" (#"+esc(d.seq)+")</dd><dt>When</dt><dd>"+esc(d.issuedAt)+"</dd><dt>Bitcoin timestamp</dt><dd>"+esc(d.timestamp&&d.timestamp.status)+(d.timestamp&&d.timestamp.blockHeight?" (block "+esc(d.timestamp.blockHeight)+")":"")+"</dd></dl><p><small>Its place in the workspace's chain of receipts is checked in the console under Receipts.</small></p>";
+  if(pass&&d.sample)html+='<p id="verify-sample" style="border:3px solid var(--bad);color:var(--bad);font-weight:700;padding:8px 12px;border-radius:8px">'+esc(d.sampleNotice||"SAMPLE")+"</p>";
   if(pass&&d.kind==="assurance-pack")html+="<p><small>Signature: "+esc(d.signature)+". The fingerprint proves the pack is unchanged since it was built, not that its contents are true.</small></p>";
   return html;
 }
