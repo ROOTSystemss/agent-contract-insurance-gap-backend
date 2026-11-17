@@ -64,11 +64,24 @@ model User {
   uploadedDocs Document[]           @relation("DocumentUploader")
   auditEvents  AuditEvent[]         @relation("AuditActor")
   authTokens   AuthToken[]
+  twoFactor    UserTwoFactor?
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
 }
 
 // One-time links for email verification and password reset. Only the SHA-256 of the token is stored.
+// Two-factor sign-in (knock-out 2026-11-16). secret is sealed (field vault); recoveryHashes are SHA-256 hashes.
+model UserTwoFactor {
+  userId         String    @id @db.Uuid
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secret         String
+  enabledAt      DateTime?
+  lastStep       BigInt?
+  recoveryHashes Json      @default("[]")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
 model AuthToken {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @db.Uuid

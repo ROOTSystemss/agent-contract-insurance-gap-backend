@@ -9,6 +9,7 @@ import type { GovernanceGateway } from "../governance/gateway.js";
 import type { ConsoleBilling } from "../governance/billing.js";
 import type { AccountSecurity } from "../security/account-security.js";
 import type { LoginAttempts, knownDevices } from "../security/login-attempts.js";
+import type { pendingTickets } from "../security/two-factor.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -25,6 +26,9 @@ declare module "fastify" {
     accountSecurity: AccountSecurity;
     loginAttempts: LoginAttempts;
     knownDevices: ReturnType<typeof knownDevices>;
+    // Two-factor sign-in: pending sign-in tickets and the per-account wrong-code limiter (8 per 15 minutes).
+    twoFactorTickets: ReturnType<typeof pendingTickets>;
+    twoFactorAttempts: LoginAttempts;
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {

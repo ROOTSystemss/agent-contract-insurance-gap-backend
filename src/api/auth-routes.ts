@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { User } from "../domain/types.js";
+import type { Role, User } from "../domain/types.js";
+import { checkCode, hashRecovery, matchStep, newRecoveryCodes, newSecret, otpauthUri } from "../security/two-factor.js";
 import { AppError, unauthorized } from "../shared/errors.js";
 import { actor, audit, success } from "./helpers.js";
 import { loginSchema, registerSchema } from "./schemas.js";
@@ -16,6 +18,11 @@ const tokenBody = z.object({ token: z.string().min(1).max(200) });
 const resetBody = z.object({ token: z.string().min(1).max(200), password: newPassword });
 const forgotBody = z.object({ email: z.email().max(254) });
 const changeBody = z.object({ currentPassword: z.string().min(1).max(128), newPassword });
+const codeField = z.string().trim().min(6).max(20);
+const twoFactorLoginBody = z.object({ pendingToken: z.string().min(10).max(1000), code: codeField });
+const codeBody = z.object({ code: codeField });
+const disableBody = z.object({ password: z.string().min(1).max(128), code: codeField });
+const privileged = (role: Role) => role === "owner" || role === "admin";
 
 // Same work whether or not the email exists, so response time does not reveal registered addresses.
 const DUMMY_HASH = bcrypt.hashSync("no-such-account-timing-decoy", 12);
@@ -97,28 +104,127 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       const membership = await app.store.getMembership(user.id);
       if (!membership) throw unauthorized();
       app.loginAttempts.succeeded(request.ip, email);
-      void reply.header("Set-Cookie", app.knownDevices.cookieFor(request.headers.cookie, email, secureCookies));
-      request.actor = {
-        userId: user.id,
-        organizationId: membership.organizationId,
-        role: membership.role,
-      };
-      const accessToken = await reply.jwtSign({
-        sub: user.id,
-        organizationId: membership.organizationId,
-        role: membership.role,
-      });
-      await audit(app.store, request, "user", user.id, "auth.login_success");
-      return success(request, { accessToken, tokenType: "Bearer", ...verification(user) });
+      // Two-factor on: the password alone issues no token, only a short single-use ticket for POST /login/2fa.
+      const twoFactor = await app.store.getTwoFactor(user.id);
+      if (twoFactor && twoFactor.enabledAt) {
+        const pendingToken = app.twoFactorTickets.issue(user.id, membership.organizationId, membership.role);
+        await auditAs(request, user.id, membership.organizationId, "auth.login_code_required");
+        return success(request, { twoFactorRequired: true, pendingToken });
+      }
+      return issueSession(request, reply, user, membership, {});
     },
   );
+
+  // Audit rows for steps before a session exists (request.actor stays unset: nothing here is signed in).
+  async function auditAs(request: FastifyRequest, userId: string, organizationId: string, action: string) {
+    await app.store.addAuditEvent({ id: randomUUID(), organizationId, actorId: userId, resourceType: "user", resourceId: userId, action, requestId: request.id, metadata: {}, createdAt: new Date().toISOString() });
+  }
+
+  async function issueSession(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    user: User,
+    membership: { organizationId: string; role: Role },
+    details: Record<string, string | number | boolean | null>,
+  ) {
+    void reply.header("Set-Cookie", app.knownDevices.cookieFor(request.headers.cookie, user.email, secureCookies));
+    request.actor = { userId: user.id, organizationId: membership.organizationId, role: membership.role };
+    const accessToken = await reply.jwtSign({ sub: user.id, organizationId: membership.organizationId, role: membership.role });
+    await audit(app.store, request, "user", user.id, "auth.login_success", details);
+    return success(request, { accessToken, tokenType: "Bearer", ...verification(user) });
+  }
+
+  // Second step of a sign-in with two-factor on: the ticket from /login plus a current code or a recovery code.
+  app.post("/login/2fa", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const input = twoFactorLoginBody.parse(request.body);
+    const ticket = app.twoFactorTickets.read(input.pendingToken);
+    if (!ticket) throw new AppError(401, "SIGN_IN_EXPIRED", "This sign-in has expired. Enter your email and password again.");
+    const key = "2fa:" + ticket.userId;
+    if (!app.twoFactorAttempts.attempt("account", key)) {
+      void reply.header("Retry-After", String(app.twoFactorAttempts.retryAfter("account", key)));
+      throw new AppError(429, "TOO_MANY_CODES", "Too many wrong codes. Wait 15 minutes and sign in again.");
+    }
+    const [user, record, membership] = await Promise.all([
+      app.store.getUser(ticket.userId),
+      app.store.getTwoFactor(ticket.userId),
+      app.store.getMembership(ticket.userId, ticket.organizationId),
+    ]);
+    if (!user || !membership || !record || !record.enabledAt) throw unauthorized();
+    const result = checkCode(record, input.code);
+    if (!result.ok) {
+      await auditAs(request, user.id, membership.organizationId, "auth.login_code_wrong");
+      throw new AppError(400, "INVALID_CODE", "That code is not right, or was already used. Enter the current 6-digit code from your authenticator app, or a recovery code.");
+    }
+    app.twoFactorTickets.spend(ticket.nonce);
+    await app.store.saveTwoFactor(result.method === "app" ? { ...record, lastStep: result.step } : { ...record, recoveryHashes: result.remaining });
+    app.twoFactorAttempts.succeeded("account", key);
+    return issueSession(request, reply, user, membership, result.method === "recovery" ? { twoFactor: "recovery", recoveryCodesLeft: result.remaining.length } : { twoFactor: "app" });
+  });
+
+  // ----- Two-factor setup (signed in) -----
+  app.get("/two-factor", { preHandler: app.authenticate }, async (request) => {
+    const authenticated = actor(request);
+    const record = await app.store.getTwoFactor(authenticated.userId);
+    const enabled = Boolean(record && record.enabledAt);
+    return success(request, { enabled, enabledAt: record?.enabledAt ?? null, recoveryCodesLeft: enabled && record ? record.recoveryHashes.length : 0, prompt: !enabled && privileged(authenticated.role) });
+  });
+
+  app.post("/two-factor/start", { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request) => {
+    const authenticated = actor(request);
+    const user = await app.store.getUser(authenticated.userId);
+    if (!user) throw unauthorized();
+    const existing = await app.store.getTwoFactor(user.id);
+    if (existing && existing.enabledAt) throw new AppError(409, "TWO_FACTOR_ALREADY_ON", "Two-factor sign-in is already on. Turn it off first to set up a new app.");
+    const secret = newSecret();
+    await app.store.saveTwoFactor({ userId: user.id, secret, enabledAt: null, lastStep: null, recoveryHashes: [] });
+    return success(request, { secret, otpauthUri: otpauthUri(user.email, secret) });
+  });
+
+  app.post("/two-factor/enable", { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request) => {
+    const { code } = codeBody.parse(request.body);
+    const authenticated = actor(request);
+    const record = await app.store.getTwoFactor(authenticated.userId);
+    if (!record) throw new AppError(400, "TWO_FACTOR_NOT_STARTED", "Start the setup first.");
+    if (record.enabledAt) throw new AppError(409, "TWO_FACTOR_ALREADY_ON", "Two-factor sign-in is already on.");
+    const step = matchStep(record.secret, code);
+    if (step === null) throw new AppError(400, "INVALID_CODE", "That code is not right. Enter the current 6-digit code your authenticator app shows for AI Agent Trust.");
+    const recoveryCodes = newRecoveryCodes();
+    await app.store.saveTwoFactor({ ...record, enabledAt: new Date().toISOString(), lastStep: step, recoveryHashes: recoveryCodes.map(hashRecovery) });
+    await audit(app.store, request, "user", authenticated.userId, "auth.two_factor_enabled");
+    return success(request, { enabled: true, recoveryCodes });
+  });
+
+  app.post("/two-factor/disable", { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const input = disableBody.parse(request.body);
+    const authenticated = actor(request);
+    const user = await app.store.getUser(authenticated.userId);
+    if (!user) throw unauthorized();
+    if (!app.loginAttempts.attempt(request.ip, user.email)) {
+      void reply.header("Retry-After", String(app.loginAttempts.retryAfter(request.ip, user.email)));
+      throw new AppError(429, "TOO_MANY_ATTEMPTS", "Too many wrong passwords. Wait 15 minutes and try again.");
+    }
+    if (!(await bcrypt.compare(input.password, user.passwordHash))) throw new AppError(403, "WRONG_PASSWORD", "The password is not correct.");
+    app.loginAttempts.succeeded(request.ip, user.email);
+    const record = await app.store.getTwoFactor(user.id);
+    if (!record || !record.enabledAt) throw new AppError(409, "TWO_FACTOR_NOT_ON", "Two-factor sign-in is not on.");
+    const key = "2fa:" + user.id;
+    if (!app.twoFactorAttempts.attempt("account", key)) throw new AppError(429, "TOO_MANY_CODES", "Too many wrong codes. Wait 15 minutes and try again.");
+    const result = checkCode(record, input.code);
+    if (!result.ok) throw new AppError(400, "INVALID_CODE", "That code is not right, or was already used.");
+    app.twoFactorAttempts.succeeded("account", key);
+    await app.store.deleteTwoFactor(user.id);
+    await audit(app.store, request, "user", user.id, "auth.two_factor_disabled");
+    return success(request, { enabled: false });
+  });
 
   app.get("/me", { preHandler: app.authenticate }, async (request) => {
     const authenticated = actor(request);
     const user = await app.store.getUser(authenticated.userId);
     const organization = await app.store.getOrganization(authenticated.organizationId);
     if (!user || !organization) throw unauthorized();
-    return success(request, { user: safeUser(user), organization, role: authenticated.role, ...verification(user) });
+    const twoFactor = await app.store.getTwoFactor(user.id);
+    const twoFactorEnabled = Boolean(twoFactor && twoFactor.enabledAt);
+    return success(request, { user: safeUser(user), organization, role: authenticated.role, ...verification(user), twoFactorEnabled, twoFactorPrompt: !twoFactorEnabled && privileged(authenticated.role) });
   });
 
   // Opened from the emailed link (/account#verify=...). Proves the person receives mail at the address.

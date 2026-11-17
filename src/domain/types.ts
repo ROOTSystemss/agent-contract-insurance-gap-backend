@@ -117,6 +117,16 @@ export interface User {
 
 export type AuthTokenPurpose = "verify_email" | "reset_password";
 
+// Two-factor sign-in (knock-out 2026-11-16). secret: base32 TOTP secret (sealed at rest by the Prisma store).
+// enabledAt null = setup started but not confirmed with a code yet.
+export interface TwoFactorRecord {
+  userId: string;
+  secret: string;
+  enabledAt: string | null;
+  lastStep: number | null;
+  recoveryHashes: string[];
+}
+
 export interface Organization {
   id: string;
   name: string;

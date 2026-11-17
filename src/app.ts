@@ -36,6 +36,7 @@ import { loadConfig, type AppConfig } from "./config/env.js";
 import { OAuthCodeStore } from "./security/oauth-code-store.js";
 import { AccountSecurity } from "./security/account-security.js";
 import { createLoginAttempts, knownDevices } from "./security/login-attempts.js";
+import { pendingTickets } from "./security/two-factor.js";
 import { trustProxyHops } from "./security/client-ip.js";
 import { createResendMailer, noMailer, type Mailer } from "./security/mailer.js";
 import { DocumentService } from "./documents/document-service.js";
@@ -179,6 +180,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.decorate("accountSecurity", new AccountSecurity(store, mailer, config));
   app.decorate("loginAttempts", createLoginAttempts());
   app.decorate("knownDevices", knownDevices(config.JWT_SECRET));
+  app.decorate("twoFactorTickets", pendingTickets(config.JWT_SECRET));
+  // Per account (one fixed address key): 8 wrong codes per 15 minutes, no per-address sharing.
+  app.decorate("twoFactorAttempts", createLoginAttempts({ perIpEmail: 8, perEmail: 8 }));
   app.decorateRequest("actor", null);
 
   await app.register(helmet, {

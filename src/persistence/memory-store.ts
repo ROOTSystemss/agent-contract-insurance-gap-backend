@@ -13,6 +13,7 @@ import type {
   Paginated,
   PaginationInput,
   Project,
+  TwoFactorRecord,
   User,
   Role,
   ServiceLink,
@@ -43,6 +44,7 @@ function paginate<T>(items: T[], input: PaginationInput): Paginated<T> {
 
 export class MemoryStore implements Store {
   private users = new Map<string, User>();
+  private twoFactor = new Map<string, TwoFactorRecord>();
   private organizations = new Map<string, Organization>();
   private memberships = new Map<string, OrganizationMember>();
   private projects = new Map<string, Project>();
@@ -121,6 +123,19 @@ export class MemoryStore implements Store {
   async setEmailVerified(userId: string, at: string): Promise<void> {
     const found = this.users.get(userId);
     if (found && !found.emailVerifiedAt) this.users.set(userId, { ...found, emailVerifiedAt: at, updatedAt: now() });
+  }
+
+  async getTwoFactor(userId: string): Promise<TwoFactorRecord | null> {
+    const found = this.twoFactor.get(userId);
+    return found ? { ...found, recoveryHashes: [...found.recoveryHashes] } : null;
+  }
+
+  async saveTwoFactor(record: TwoFactorRecord): Promise<void> {
+    this.twoFactor.set(record.userId, { ...record, recoveryHashes: [...record.recoveryHashes] });
+  }
+
+  async deleteTwoFactor(userId: string): Promise<void> {
+    this.twoFactor.delete(userId);
   }
 
   async setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void> {
@@ -534,6 +549,7 @@ export class MemoryStore implements Store {
   }
 
   async reset(): Promise<void> {
+    this.twoFactor.clear();
     this.authTokens.clear();
     this.receipts.clear();
     this.consoleSigners.clear();

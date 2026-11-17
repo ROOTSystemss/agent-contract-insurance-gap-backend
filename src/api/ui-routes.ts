@@ -19,6 +19,8 @@ const assets = {
   // Email verification, password reset and change (links in account emails land here).
   "/account": { file: "account.html", type: "text/html; charset=utf-8" },
   "/account.js": { file: "account.js", type: "text/javascript; charset=utf-8" },
+  // Two-factor sign-in: the code step shared by every page that signs people in.
+  "/two-factor.js": { file: "two-factor.js", type: "text/javascript; charset=utf-8" },
   // Agent Governance console (Floor 3): one page app plus its self-hosted fonts and logo.
   "/console": { file: "console.html", type: "text/html; charset=utf-8" },
   "/console.js": { file: "console.js", type: "text/javascript; charset=utf-8" },

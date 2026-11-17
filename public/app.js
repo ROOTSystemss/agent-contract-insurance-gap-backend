@@ -232,7 +232,8 @@ async function submitAuth(event) {
       method: "POST",
       body: JSON.stringify(formDataObject(form)),
     });
-    state.token = data.accessToken;
+    const signedIn = data && data.twoFactorRequired ? await window.rsTwoFactorStep(data.pendingToken) : data;
+    state.token = signedIn.accessToken;
     sessionStorage.setItem("authorityAtlasToken", state.token);
     await initialize();
     toast(
@@ -271,10 +272,16 @@ function shell(content) {
     </aside>
     <section class="main">
       <header class="topbar"><div class="breadcrumb"><span>${escapeHtml(org.name || "Workspace")}</span><span class="slash">/</span><strong>${escapeHtml(state.project?.name || "All projects")}</strong></div><button class="button button-secondary session-signout" data-logout aria-label="Sign out">Sign out</button></header>
-      <div class="content">${verifyBanner()}${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Agent Trust · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
+      <div class="content">${verifyBanner()}${twoFactorBanner()}${["admin", "owner"].includes(state.me?.role) ? '<div style="margin-bottom:16px"><button class="button button-secondary" data-governance-export>Export governance summary</button><p class="small muted">AI Agent Trust · Export project inventory for your readiness dashboard. Source documents and accounts stay separate.</p></div>' : ""}${content}</div>
     </section>
   </div>`;
   bindShell();
+}
+
+// Two-factor sign-in prompt for workspace owners and admins without it (never a lock).
+function twoFactorBanner() {
+  if (!state.me || !state.me.twoFactorPrompt) return "";
+  return `<div class="card card-pad" role="status" id="twofa-prompt" style="margin-bottom:16px"><strong>Turn on two-factor sign-in.</strong> You own or administer this workspace: protect it with a code from an authenticator app. <a class="button button-secondary" href="/account#2fa" style="margin-left:8px">Set it up</a></div>`;
 }
 
 // Shown until the account's email is confirmed (only where verification is required).

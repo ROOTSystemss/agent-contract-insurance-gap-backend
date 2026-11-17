@@ -14,6 +14,7 @@ import type {
   Paginated,
   PaginationInput,
   Project,
+  TwoFactorRecord,
   User,
   ServiceLink,
   ConsoleCertificate,
@@ -269,6 +270,33 @@ export class PrismaStore implements Store {
 
   async setEmailVerified(userId: string, at: string): Promise<void> {
     await this.client.user.updateMany({ where: { id: userId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date(at) } });
+  }
+
+  // The TOTP secret is sealed with the field vault (DOCUMENT_ENCRYPTION_KEY); recovery codes are already hashes.
+  async getTwoFactor(userId: string): Promise<TwoFactorRecord | null> {
+    const row = await this.client.userTwoFactor.findUnique({ where: { userId } });
+    if (!row) return null;
+    return {
+      userId: row.userId,
+      secret: this.vault.open(row.secret),
+      enabledAt: row.enabledAt ? iso(row.enabledAt) : null,
+      lastStep: row.lastStep === null ? null : Number(row.lastStep),
+      recoveryHashes: Array.isArray(row.recoveryHashes) ? (row.recoveryHashes as string[]) : [],
+    };
+  }
+
+  async saveTwoFactor(record: TwoFactorRecord): Promise<void> {
+    const data = {
+      secret: this.vault.seal(record.secret),
+      enabledAt: record.enabledAt ? new Date(record.enabledAt) : null,
+      lastStep: record.lastStep === null ? null : BigInt(record.lastStep),
+      recoveryHashes: record.recoveryHashes,
+    };
+    await this.client.userTwoFactor.upsert({ where: { userId: record.userId }, create: { userId: record.userId, ...data }, update: data });
+  }
+
+  async deleteTwoFactor(userId: string): Promise<void> {
+    await this.client.userTwoFactor.deleteMany({ where: { userId } });
   }
 
   async setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void> {
@@ -878,6 +906,7 @@ export class PrismaStore implements Store {
 
   async reset(): Promise<void> {
     await this.client.$transaction([
+      this.client.userTwoFactor.deleteMany(),
       this.client.evidenceReceipt.deleteMany(),
       this.client.consoleSigner.deleteMany(),
       this.client.billingWebhookEvent.deleteMany(),

@@ -192,6 +192,8 @@
         ? api("/auth/login", { method: "POST", body: { email: data.email, password: data.password } })
         : api("/auth/register", { method: "POST", body: { email: data.email, password: data.password, name: data.name, organizationName: data.organization } });
       call.then(function (res) {
+        return res && res.twoFactorRequired ? window.rsTwoFactorStep(res.pendingToken) : res;
+      }).then(function (res) {
         state.token = res.accessToken;
         sessionStorage.setItem(TOKEN_KEY, state.token);
         location.hash = "#/overview";
@@ -260,6 +262,15 @@
       h("span", null, h("strong", { text: "Confirm your email address. " }), "We sent a link to " + ((me.user && me.user.email) || "your address") + ". Until you open it, certificates, approvals and signed packs stay locked."),
       resend);
   }
+  // Two-factor sign-in prompt for workspace owners and admins without it (never a lock).
+  function twoFactorBanner() {
+    var me = state.me || {};
+    if (!me.twoFactorPrompt) return null;
+    return h("div", { class: "panel", role: "status", id: "twofa-prompt", style: "margin:16px 24px 0;padding:14px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap" },
+      icon("alert"),
+      h("span", null, h("strong", { text: "Turn on two-factor sign-in. " }), "You own or administer this workspace: protect it with a code from an authenticator app."),
+      h("a", { class: "btn btn--sm", href: "/account#2fa" }, "Set it up"));
+  }
   function field(label, input, hint) {
     var id = "f-" + Math.random().toString(36).slice(2, 8);
     input.id = id;
@@ -303,6 +314,7 @@
         h("button", { class: "kbar", type: "button", onclick: openPalette, "aria-label": "Open command palette" }, icon("search"), h("span", { text: "Jump to or do anything…" }), h("kbd", { text: "Ctrl K" })),
         state.status && state.status.linked ? h("button", { class: "btn btn--primary", onclick: function () { openIssueDrawer(); }, "aria-label": "Issue certificate" }, icon("plus"), h("span", { class: "btn__label", text: "Issue certificate" })) : null),
       verifyBanner(),
+      twoFactorBanner(),
       content));
     clear(app).appendChild(shell);
     return content;

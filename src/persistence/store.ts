@@ -19,6 +19,7 @@ import type {
   ConsoleSubscription,
   ConsoleSigner,
   EvidenceReceiptRecord,
+  TwoFactorRecord,
   User,
 } from "../domain/types.js";
 
@@ -44,6 +45,10 @@ export interface Store {
   getUser(id: string): Promise<User | null>;
   setEmailVerified(userId: string, at: string): Promise<void>;
   setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void>;
+  // Two-factor sign-in state, one row per user (null = never set up).
+  getTwoFactor(userId: string): Promise<TwoFactorRecord | null>;
+  saveTwoFactor(record: TwoFactorRecord): Promise<void>;
+  deleteTwoFactor(userId: string): Promise<void>;
   // One-time account links. Only the SHA-256 of the token is stored. Saving a new token for a user and
   // purpose retires that user's earlier unused tokens of the same purpose.
   saveAuthToken(record: { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string }): Promise<void>;

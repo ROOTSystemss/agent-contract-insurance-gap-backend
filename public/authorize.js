@@ -99,7 +99,8 @@ async function submitAuth(event) {
   message.textContent = "";
   try {
     const payload = Object.fromEntries(new FormData(form).entries());
-    const data = await api(`/auth/${authMode}`, { method: "POST", body: JSON.stringify(payload) });
+    const first = await api(`/auth/${authMode}`, { method: "POST", body: JSON.stringify(payload) });
+    const data = first && first.twoFactorRequired ? await window.rsTwoFactorStep(first.pendingToken) : first;
     sessionStorage.setItem(TOKEN_KEY, data.accessToken);
     await confirmView();
   } catch (error) {

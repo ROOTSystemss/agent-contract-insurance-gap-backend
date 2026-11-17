@@ -19,6 +19,13 @@
     return payload.data;
   }
 
+  async function apiGet(path, token) {
+    const response = await fetch(`${API}${path}`, { headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error((payload.error && payload.error.message) || `Something went wrong (${response.status}).`);
+    return payload.data;
+  }
+
   function page(title, intro, inner) {
     app.innerHTML = `<main class="auth-page"><section class="auth-story"><div><div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div></div><div class="story-copy"><span class="eyebrow">AI Agent Trust</span><h1>Your <em>account</em></h1><p>Email confirmation and password changes for the Agent Governance console and the coverage workspace (one sign-in for both).</p></div></section><section class="auth-panel"><div class="auth-card"><span class="eyebrow">Account</span><h2>${esc(title)}</h2><p class="intro">${intro}</p>${inner}</div></section></main>`;
   }
@@ -91,6 +98,37 @@
     });
   }
 
+  // Two-factor sign-in (knock-out 2026-11-16): set up with an authenticator app, recovery codes shown once,
+  // turning it off needs the password and a current code.
+  async function twoFactor() {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    const signIn = `<p><a class="button button-primary" href="/console">Sign in</a></p>`;
+    if (!token) { page("Sign in first", "Setting up two-factor sign-in needs you to be signed in.", signIn); return; }
+    let status;
+    try { status = await apiGet("/auth/two-factor", token); } catch (error) { page("Sign in again", esc(error.message), signIn); return; }
+    if (status.enabled) {
+      page("Two-factor sign-in is on", `Every sign-in asks for a code from your authenticator app. Recovery codes left: ${esc(status.recoveryCodesLeft)}.`,
+        `<p class="small" id="twofa-on">On since ${esc(status.enabledAt)}.</p><form id="twofa-off" class="field-grid"><div class="field full"><label for="off-pw">Password</label><input id="off-pw" name="password" type="password" autocomplete="current-password" required maxlength="128" /></div><div class="field full"><label for="off-code">Current code, or a recovery code</label><input id="off-code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="20" /></div><div class="field full"><button class="button button-secondary button-block" type="submit">Turn two-factor sign-in off</button><p class="form-message" role="alert"></p></div></form>${links}`);
+      wire(document.querySelector("#twofa-off"), async (values) => {
+        await api("/auth/two-factor/disable", { password: values.password, code: values.code }, token);
+        twoFactor();
+      });
+      return;
+    }
+    page("Turn on two-factor sign-in", "Add AI Agent Trust to an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy). After that, every sign-in also asks for its 6-digit code." + (status.prompt ? " Recommended for workspace owners and admins." : ""),
+      `<form id="twofa-start"><button class="button button-primary button-block" type="submit">Start setup</button><p class="form-message" role="alert"></p></form>${links}`);
+    wire(document.querySelector("#twofa-start"), async () => {
+      const setup = await api("/auth/two-factor/start", {}, token);
+      page("Add the key to your app", "In your authenticator app choose to enter a setup key (time-based), then type the 6-digit code it shows.",
+        `<p class="small">Setup key</p><p><code id="twofa-secret">${esc(setup.secret.replace(/(.{4})/g, "$1 ").trim())}</code></p><p class="small">On your phone you can open this <a href="${esc(setup.otpauthUri)}">setup link</a> instead.</p><form id="twofa-enable" class="field-grid"><div class="field full"><label for="en-code">6-digit code</label><input id="en-code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="6" /></div><div class="field full"><button class="button button-primary button-block" type="submit">Turn on</button><p class="form-message" role="alert"></p></div></form>`);
+      wire(document.querySelector("#twofa-enable"), async (values) => {
+        const on = await api("/auth/two-factor/enable", { code: values.code }, token);
+        page("Two-factor sign-in is on", "Save these recovery codes somewhere safe now. Each works once if you lose your phone. They are not shown again.",
+          `<ul id="recovery-codes" class="small">${on.recoveryCodes.map((c) => `<li><code>${esc(c)}</code></li>`).join("")}</ul>${links}`);
+      });
+    });
+  }
+
   const hash = window.location.hash.replace(/^#/, "");
   const [kind, token] = hash.split("=");
   if ((kind === "verify" || kind === "reset") && token) {
@@ -99,5 +137,6 @@
     if (kind === "verify") verify(token);
     else reset(token);
   } else if (kind === "change") change();
+  else if (kind === "2fa") twoFactor();
   else forgot();
 })();
