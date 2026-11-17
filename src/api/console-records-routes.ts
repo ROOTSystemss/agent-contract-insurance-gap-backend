@@ -448,6 +448,62 @@ export const consoleRecordsRoutes: FastifyPluginAsync = async (app) => {
     return success(request, { id, status: "closed", closedAt, receiptSeq: receipt?.seq ?? null });
   });
 
+  // ---------- BM-42 kill switch with proof ----------
+  // Revokes every active certificate of one agent through the existing Agent Certificates revoke call, then asks
+  // Agent Certificates to verify each one again and records that it now FAILS. One signed "agent-kill-switch" receipt
+  // carries the counts. Honest scope: this stops the agent wherever its certificate is checked (the public /verify,
+  // runtimes that use the certificate gate); a runtime that never checks certificates is not stopped by it.
+  const killBody = z.object({ reason: z.string().trim().min(5).max(500) }).strict();
+  const KILL_SCOPE = "Stops the agent wherever its certificate is checked (the public /verify and any runtime that checks certificates before acting). A runtime that does not check certificates is not stopped by this.";
+
+  app.post("/agents/:agentId/kill", async (request, reply) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { agentId } = agentParams.parse(request.params);
+    const { reason } = killBody.parse(request.body);
+    const { source, certificates } = await readCertificates(organization);
+    if (source !== "authority-atlas") throw new AppError(503, "CERTIFICATES_UNAVAILABLE", "Agent Certificates could not be read, so nothing was revoked. Try again in a minute.");
+    const active = certificates.filter((c) => c.agentId === agentId && c.status === "active");
+    if (!active.length) throw new AppError(409, "NOTHING_ACTIVE", "This agent has no active certificate, so there is nothing to stop.");
+    const results: Array<{ jti: string; revoked: boolean; revokedAt: string | null; checkAfter: "fails" | "still-passes" | "not-checked"; detail: string | null }> = [];
+    for (const cert of active) {
+      let revoked = false, revokedAt: string | null = null, detail: string | null = null;
+      try {
+        revokedAt = (await app.governance.revokeCertificate(organization, cert.jti)).revokedAt ?? new Date().toISOString();
+        revoked = true;
+      } catch (error) {
+        detail = `revoke failed: ${(error as Error).message}`.slice(0, 200);
+      }
+      let checkAfter: "fails" | "still-passes" | "not-checked" = "not-checked";
+      try {
+        const checked = await app.governance.verifyCertificate(organization, cert.jti);
+        checkAfter = (checked.verification as { valid?: unknown } | null)?.valid === true ? "still-passes" : "fails";
+      } catch (error) {
+        detail = detail ?? `could not re-check: ${(error as Error).message}`.slice(0, 200);
+      }
+      results.push({ jti: cert.jti, revoked, revokedAt, checkAfter, detail });
+    }
+    const revokedCount = results.filter((r) => r.revoked).length;
+    const proven = results.filter((r) => r.checkAfter === "fails").length;
+    const outcome = revokedCount === results.length && proven === results.length ? "stopped" : revokedCount === 0 ? "failed" : "partial";
+    const id = randomUUID();
+    const at = new Date().toISOString();
+    const by = actor(request).userId;
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "kill", key: id, data: { agentId, reason, at, by, outcome, results } });
+    await audit(app.store, request, "organization", organization.id, "console.agent_kill_switch", { agentId, outcome, certificates: results.length });
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "agent-kill-switch", subject: { kind: "agent", id: agentId },
+      facts: { outcome, certificates: results.length, revoked: revokedCount, checkedAndFailing: proven, notChecked: results.filter((r) => r.checkAfter === "not-checked").length, jtis: results.map((r) => r.jti), reasonSha256: sha256Hex(reason), by },
+    }, request.log);
+    return reply.code(outcome === "failed" ? 502 : 200).send(success(request, { agentId, outcome, at, results, scope: KILL_SCOPE, receiptSeq: receipt?.seq ?? null }));
+  });
+
+  app.get("/kill-switch", async (request) => {
+    const organization = await workspace(request);
+    const rows = await app.store.listConsoleRecords(organization.id, "kill");
+    return success(request, { scope: KILL_SCOPE, events: rows.map((r) => ({ id: r.key, ...r.data })).reverse() });
+  });
+
   app.delete("/agents/:agentId", async (request) => {
     requireRole(request, "admin");
     const organization = await workspace(request);

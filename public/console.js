@@ -965,6 +965,37 @@
     load();
   });
 
+  // BM-42 kill switch with proof
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Kill switch", "Stop an agent at once: every active certificate it has is revoked, then checked again to prove it now fails. The result is a signed receipt.");
+    content.appendChild(p.panel);
+    var scope = h("p", { class: "faint", style: "font-size:12.5px" });
+    var agentsHost = h("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin:8px 0" });
+    var log = h("ul", { class: "faint", style: "font-size:12.5px" });
+    p.body.appendChild(scope); p.body.appendChild(agentsHost); p.body.appendChild(log);
+    function kill(agent) {
+      var reason = window.prompt("Stop " + agent.name + " now? Why (at least 5 characters; kept here, only its fingerprint goes in the signed receipt):", "");
+      if (!reason) return;
+      api("/console/agents/" + encodeURIComponent(agent.agentId) + "/kill", { method: "POST", body: { reason: reason.trim() } })
+        .then(function (r) { toast(r.outcome === "stopped" ? "Stopped: every certificate revoked and checked" : "Outcome: " + r.outcome + ". See the details below.", r.outcome !== "stopped"); load(); })
+        .catch(function (err) { toast(err.message, true); load(); });
+    }
+    function load() {
+      Promise.all([api("/console/agents"), api("/console/kill-switch")]).then(function (res) {
+        scope.textContent = res[1].scope;
+        clear(agentsHost);
+        var active = res[0].agents.filter(function (a) { return a.status === "active"; });
+        if (!active.length) agentsHost.appendChild(h("span", { class: "faint", text: "No agent has an active certificate." }));
+        active.forEach(function (a) { agentsHost.appendChild(h("button", { class: "btn btn--sm", style: "border-color:var(--bad,#b42318)", onclick: function () { kill(a); } }, "Stop " + a.name)); });
+        clear(log);
+        res[1].events.slice(0, 10).forEach(function (e) {
+          log.appendChild(h("li", { text: e.at.slice(0, 16).replace("T", " ") + " UTC - " + e.agentId + " - " + e.outcome + " (" + e.results.filter(function (x) { return x.checkAfter === "fails"; }).length + " of " + e.results.length + " certificates checked and failing)" }));
+        });
+      }).catch(function (err) { toast(err.message, true); });
+    }
+    load();
+  });
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {

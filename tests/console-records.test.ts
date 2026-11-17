@@ -287,6 +287,45 @@ describe("console governance records", () => {
     });
   });
 
+  describe("BM-42 kill switch with proof", () => {
+    it("revokes every active certificate, re-checks each one (now fails), and signs the proof", async () => {
+      const activeBefore = fakes.certs.filter((c) => c.agentId === "invoice-bot" && c.status === "active").length;
+      expect(activeBefore).toBeGreaterThanOrEqual(1);
+      expect((await call("POST", "/agents/invoice-bot/kill", viewerToken, { reason: "Paid a duplicate invoice." })).statusCode).toBe(403);
+      const res = await call("POST", "/agents/invoice-bot/kill", ownerToken, { reason: "Paid a duplicate invoice." });
+      expect(res.statusCode).toBe(200);
+      const out = data<{ outcome: string; results: Array<{ revoked: boolean; checkAfter: string }>; scope: string }>(res);
+      expect(out.outcome).toBe("stopped");
+      expect(out.results).toHaveLength(activeBefore);
+      expect(out.results.every((r) => r.revoked && r.checkAfter === "fails")).toBe(true);
+      expect(out.scope).toMatch(/does not check certificates is not stopped/);
+      expect(fakes.certs.filter((c) => c.agentId === "invoice-bot" && c.status === "active")).toHaveLength(0);
+      const r = (await receipts()).receipts.find((x) => x.type === "agent-kill-switch")!;
+      expect(r.receipt.facts).toMatchObject({ outcome: "stopped", revoked: activeBefore, checkedAndFailing: activeBefore });
+      expect(JSON.stringify(r.receipt)).not.toContain("duplicate invoice");
+      expect((await publicVerify(r.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify(tamper(r.receipt))).verdict).toBe("FAIL");
+      expect(data<{ events: unknown[] }>(await call("GET", "/kill-switch", ownerToken)).events).toHaveLength(1);
+      expect(data<{ agents: Array<{ agentId: string; status: string }> }>(await call("GET", "/agents", ownerToken)).agents.find((a) => a.agentId === "invoice-bot")!.status).toBe("revoked");
+    });
+
+    it("nothing active: 409; Atlas unreadable: 503 and nothing revoked; revoke failures reported, never hidden", async () => {
+      expect((await call("POST", "/agents/invoice-bot/kill", ownerToken, { reason: "Again please." })).statusCode).toBe(409);
+      await call("POST", "/certificates", ownerToken, { agentId: "report-bot", agentName: "Report bot", permissions: ["reports:read"] });
+      fakes.state.atlasDown = true;
+      try { expect((await call("POST", "/agents/report-bot/kill", ownerToken, { reason: "Test outage." })).statusCode).toBe(503); } finally { fakes.state.atlasDown = false; }
+      expect(fakes.certs.find((c) => c.agentId === "report-bot")!.status).toBe("active");
+      fakes.state.revokeFails = true;
+      let res;
+      try { res = await call("POST", "/agents/report-bot/kill", ownerToken, { reason: "Revoke will fail." }); } finally { fakes.state.revokeFails = false; }
+      expect(res.statusCode).toBe(502);
+      const out = data<{ outcome: string; results: Array<{ revoked: boolean; checkAfter: string; detail: string }> }>(res);
+      expect(out.outcome).toBe("failed");
+      expect(out.results[0]).toMatchObject({ revoked: false, checkAfter: "still-passes" });
+      expect((await receipts()).receipts.filter((x) => x.type === "agent-kill-switch").at(-1)!.receipt.facts).toMatchObject({ outcome: "failed", revoked: 0 });
+    });
+  });
+
   describe("account deletion removes the records", () => {
     it("deleting the sole owner's account deletes the workspace's console records", async () => {
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { email: "records-del@example.com", name: "Del", organizationName: "Del Org", password: "Correct Horse Battery 123!" } });
