@@ -834,6 +834,41 @@
     load();
   });
 
+  // AD-058 periodic re-certification
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Re-certification", "An admin re-approves each agent's permissions on a fixed cadence. Each decision becomes a signed receipt.");
+    content.appendChild(p.panel);
+    var head = h("p", { class: "faint", style: "font-size:12.5px" });
+    var table = h("tbody");
+    var cadence = h("input", { class: "input", type: "number", min: "30", max: "365", style: "width:90px", "aria-label": "Cadence in days" });
+    p.body.appendChild(head);
+    p.body.appendChild(h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Agent", "Last decision", "Due", "State", ""].map(function (x) { return h("th", { text: x }); }))), table)));
+    p.body.appendChild(h("details", null, h("summary", { text: "Change the cadence (admins)" }),
+      field("Re-certify every (days)", cadence, "Between 30 and 365. Example: 90 means each agent's permissions are re-approved every quarter."),
+      h("button", { class: "btn btn--sm", onclick: function () { api("/console/recertification/settings", { method: "PUT", body: { cadenceDays: Number(cadence.value) } }).then(function () { toast("Cadence saved"); load(); }).catch(function (err) { toast(err.message, true); }); } }, "Save cadence")));
+    function recertify(agent) {
+      var decision = window.prompt("Decision for " + agent.name + ": keep, reduce or revoke-requested", "keep");
+      if (!decision) return;
+      var note = window.prompt("Why? One or two sentences (kept encrypted; only its fingerprint goes in the signed receipt).", "");
+      if (!note) return;
+      api("/console/agents/" + encodeURIComponent(agent.agentId) + "/recertify", { method: "POST", body: { decision: decision.trim(), note: note.trim() } }).then(function (r) { toast(r.next || "Re-certified; next due " + r.nextDueAt.slice(0, 10)); load(); }).catch(function (err) { toast(err.message, true); });
+    }
+    function load() {
+      api("/console/recertification").then(function (r) {
+        cadence.value = r.cadenceDays;
+        head.textContent = "Every " + r.cadenceDays + " days. The clock starts at the last re-certification, else the first certificate issued.";
+        clear(table);
+        if (!r.agents.length) { table.appendChild(h("tr", null, h("td", { colspan: "5", class: "faint", text: "No agents yet." }))); return; }
+        r.agents.forEach(function (a) {
+          table.appendChild(h("tr", null, h("td", { text: a.name }), h("td", { text: a.lastDecision ? a.lastDecision + " (" + a.lastRecertifiedAt.slice(0, 10) + ")" : "none yet" }), h("td", { text: a.dueAt ? a.dueAt.slice(0, 10) : "-" }),
+            h("td", null, h("span", { class: "pill pill--" + (a.state === "current" ? "within" : a.state === "overdue" ? "outside" : "pq"), text: a.state })),
+            h("td", null, h("button", { class: "btn btn--sm", onclick: function () { recertify(a); } }, "Re-certify"))));
+        });
+      }).catch(function (err) { toast(err.message, true); });
+    }
+    load();
+  });
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {

@@ -52,7 +52,7 @@ describe("console governance records", () => {
   let orgId: string;
 
   beforeAll(async () => {
-    const config = loadConfig({ NODE_ENV: "test", JWT_SECRET: "test-secret-with-at-least-thirty-two-characters", LOG_LEVEL: "silent", PERSISTENCE_DRIVER: "memory" });
+    const config = loadConfig({ NODE_ENV: "test", JWT_SECRET: "test-secret-with-at-least-thirty-two-characters", LOG_LEVEL: "silent", PERSISTENCE_DRIVER: "memory", PQ_SIGNING_SEED: Buffer.alloc(32, 21).toString("base64") });
     app = await buildApp({ config, store, logger: false, governance: { atlasUrl: "https://atlas.test", trustProofUrl: "https://tp.test", fetchImpl: fakes.fetchImpl } });
     const register = async (email: string) => {
       const response = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { email, name: "Records Test", organizationName: "Records Org", password: "Correct Horse Battery 123!" } });
@@ -74,6 +74,9 @@ describe("console governance records", () => {
   const call = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, token: string, payload?: object) =>
     app.inject({ method, url: `/api/v1/console${url}`, headers: { authorization: `Bearer ${token}` }, ...(payload ? { payload } : {}) });
   const data = <T>(res: { payload: string }) => (JSON.parse(res.payload) as { data: T }).data;
+  const receipts = async () => data<{ chain: { intact: boolean }; receipts: Array<{ seq: number; type: string; receipt: Record<string, unknown> }> }>(await call("GET", "/receipts", ownerToken));
+  const publicVerify = async (receipt: unknown) => data<{ verdict: string; type?: string; facts?: Record<string, unknown> }>(await app.inject({ method: "POST", url: "/api/v1/public/verify", payload: { receipt } }));
+  const tamper = (receipt: Record<string, unknown>) => ({ ...receipt, facts: { ...(receipt.facts as object), tampered: true } });
 
   describe("AD-056 agent inventory", () => {
     it("before activation every status is 'not verified', never 'no certificate'", async () => {
@@ -127,6 +130,42 @@ describe("console governance records", () => {
       const body = data<{ agents: unknown[] }>(await call("GET", "/agents", otherToken));
       expect(body.agents).toEqual([]);
       expect(await store.listConsoleRecords(orgId, "agent")).toHaveLength(1);
+    });
+  });
+
+  describe("AD-058 periodic re-certification", () => {
+    it("lists agents with a due date from the first certificate (default 90 days)", async () => {
+      const body = data<{ cadenceDays: number; agents: Array<{ agentId: string; state: string; dueAt: string | null; lastRecertifiedAt: string | null }> }>(await call("GET", "/recertification", ownerToken));
+      expect(body.cadenceDays).toBe(90);
+      const invoice = body.agents.find((a) => a.agentId === "invoice-bot")!;
+      expect(invoice.lastRecertifiedAt).toBeNull();
+      expect(invoice.state).toBe("not yet re-certified");
+      expect(Date.parse(invoice.dueAt!) - Date.now()).toBeGreaterThan(88 * 864e5);
+    });
+
+    it("an admin re-certifies: decision recorded, next due date, signed receipt that /verify passes", async () => {
+      const res = await call("POST", "/agents/invoice-bot/recertify", ownerToken, { decision: "keep", note: "Permissions still match the payables process." });
+      expect(res.statusCode).toBe(201);
+      const out = data<{ nextDueAt: string; receiptSeq: number }>(res);
+      expect(out.receiptSeq).toBeGreaterThan(0);
+      const r = (await receipts()).receipts.find((x) => x.type === "agent-recertified")!;
+      expect(r.receipt.facts).toMatchObject({ decision: "keep", cadenceDays: 90 });
+      expect(JSON.stringify(r.receipt)).not.toContain("payables process");
+      expect((await publicVerify(r.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify(tamper(r.receipt))).verdict).toBe("FAIL");
+      const after = data<{ agents: Array<{ agentId: string; state: string; lastDecision: string }> }>(await call("GET", "/recertification", ownerToken));
+      expect(after.agents.find((a) => a.agentId === "invoice-bot")).toMatchObject({ state: "current", lastDecision: "keep" });
+    });
+
+    it("cadence is configurable (30-365) by admins only; viewers and unknown agents refused", async () => {
+      expect((await call("PUT", "/recertification/settings", ownerToken, { cadenceDays: 20 })).statusCode).toBe(400);
+      expect((await call("PUT", "/recertification/settings", viewerToken, { cadenceDays: 60 })).statusCode).toBe(403);
+      expect((await call("PUT", "/recertification/settings", ownerToken, { cadenceDays: 60 })).statusCode).toBe(200);
+      expect(data<{ cadenceDays: number }>(await call("GET", "/recertification", ownerToken)).cadenceDays).toBe(60);
+      expect((await call("POST", "/agents/invoice-bot/recertify", viewerToken, { decision: "keep", note: "x x x" })).statusCode).toBe(403);
+      expect((await call("POST", "/agents/no-such-bot/recertify", ownerToken, { decision: "keep", note: "x x x" })).statusCode).toBe(404);
+      const revoke = data<{ next?: string }>(await call("POST", "/agents/email-bot/recertify", ownerToken, { decision: "revoke-requested", note: "No longer needed." }));
+      expect(revoke.next).toMatch(/kill switch/);
     });
   });
 
