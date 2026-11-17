@@ -568,6 +568,41 @@ export class MemoryStore implements Store {
     this.auditEvents.clear();
   }
 
+  // ---- Account deletion (S-14) ----
+  async listMembershipsForUser(userId: string): Promise<OrganizationMember[]> {
+    return clone([...this.memberships.values()].filter((m) => m.userId === userId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+  }
+
+  async listConsoleCertificateIds(organizationId: string): Promise<string[]> {
+    return [...this.consoleCertificates.values()].filter((c) => c.organizationId === organizationId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => c.jti);
+  }
+
+  async deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }> {
+    const storageKeys = [...this.documents.values()].filter((d) => d.organizationId === organizationId).map((d) => d.storageKey);
+    const drop = <V extends { organizationId: string }>(map: Map<string, V>) => { for (const [k, v] of map) if (v.organizationId === organizationId) map.delete(k); };
+    drop(this.receipts); drop(this.consoleSigners); drop(this.consoleSubscriptions); drop(this.consoleCertificates); drop(this.serviceLinks);
+    drop(this.auditEvents); drop(this.findings); drop(this.analyses); drop(this.documents); drop(this.agents); drop(this.projects); drop(this.memberships);
+    this.organizations.delete(organizationId);
+    return { storageKeys };
+  }
+
+  async removeMembership(organizationId: string, userId: string): Promise<void> {
+    this.consoleSigners.delete(`${organizationId}:${userId}`);
+    for (const [k, m] of this.memberships) if (m.organizationId === organizationId && m.userId === userId) this.memberships.delete(k);
+  }
+
+  async deleteOrAnonymiseUser(userId: string, tombstone: { email: string; passwordHash: string; at: string }): Promise<"deleted" | "anonymised"> {
+    const referenced = [...this.documents.values()].some((d) => d.uploaderId === userId) || [...this.auditEvents.values()].some((e) => e.actorId === userId);
+    this.twoFactor.delete(userId);
+    for (const [k, t] of this.authTokens) if (t.userId === userId) this.authTokens.delete(k);
+    for (const [k, s] of this.consoleSigners) if (s.userId === userId) this.consoleSigners.delete(k);
+    for (const [k, m] of this.memberships) if (m.userId === userId) this.memberships.delete(k);
+    if (!referenced) { this.users.delete(userId); return "deleted"; }
+    const found = this.users.get(userId);
+    if (found) this.users.set(userId, { ...found, email: tombstone.email, name: "Deleted user", passwordHash: tombstone.passwordHash, emailVerifiedAt: null, passwordChangedAt: tombstone.at, updatedAt: now() });
+    return "anonymised";
+  }
+
   setRoleForTesting(userId: string, organizationId: string, role: Role): void {
     const membership = [...this.memberships.values()].find(
       (item) => item.userId === userId && item.organizationId === organizationId,

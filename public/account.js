@@ -29,7 +29,7 @@
   function page(title, intro, inner) {
     app.innerHTML = `<main class="auth-page"><section class="auth-story"><div><div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div></div><div class="story-copy"><span class="eyebrow">AI Agent Trust</span><h1>Your <em>account</em></h1><p>Email confirmation and password changes for the Agent Governance console and the coverage workspace (one sign-in for both).</p></div></section><section class="auth-panel"><div class="auth-card"><span class="eyebrow">Account</span><h2>${esc(title)}</h2><p class="intro">${intro}</p>${inner}</div></section></main>`;
   }
-  const links = `<p class="small" style="margin-top:18px"><a href="/console">Open the console</a> · <a href="/">Open the coverage workspace</a></p>`;
+  const links = `<p class="small" style="margin-top:18px"><a href="/console">Open the console</a> · <a href="/">Open the coverage workspace</a> · <a href="/account#change">Change password</a> · <a href="/account#2fa">Two-factor sign-in</a> · <a href="/account#delete" id="delete-account-link">Delete my account</a></p>`;
   const passwordFields = (prefix) =>
     `<div class="field full"><label for="${prefix}-new">New password</label><input id="${prefix}-new" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" placeholder="At least 12 characters" /></div>
      <div class="field full"><label for="${prefix}-again">Repeat the new password</label><input id="${prefix}-again" name="again" type="password" autocomplete="new-password" required minlength="12" maxlength="128" /></div>`;
@@ -129,6 +129,36 @@
     });
   }
 
+  // Delete my account (S-14, knock-out 2026-11-17). Password (+ two-factor code when on) and typing DELETE.
+  function deleteAccountPage() {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    if (!token) { page("Sign in first", "Deleting your account needs you to be signed in.", `<p><a class="button button-primary" href="/console">Sign in</a></p>`); return; }
+    page("Delete my account", "This cannot be undone.",
+      `<div id="delete-warning" class="small"><p><strong>What happens:</strong></p><ul>
+        <li>Workspaces you own <strong>alone</strong> are deleted for everyone in them: projects, agent profiles, uploaded documents (the files too), analyses, findings, audit history, console certificates (revoked on Authority Atlas first), approvals records and receipts kept here.</li>
+        <li>In workspaces with another owner, you leave; your past actions there stay in their audit history as "Deleted user".</li>
+        <li>Signed receipts and certificates already handed out stay checkable on /verify: our signing keys are not touched.</li>
+        <li>The Authority Atlas identity and Trust Proof organization created for a workspace have no delete call; the result lists them so you can ask RootSystems to remove them.</li>
+      </ul></div>
+      <form id="delete-form" class="field-grid">
+        <div class="field full"><label for="del-pw">Password</label><input id="del-pw" name="password" type="password" autocomplete="current-password" required maxlength="128" /></div>
+        <div class="field full"><label for="del-code">Two-factor code (only if two-factor sign-in is on)</label><input id="del-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="20" /></div>
+        <div class="field full"><label for="del-confirm">Type DELETE to confirm</label><input id="del-confirm" name="confirm" required maxlength="10" /></div>
+        <div class="field full"><button class="button button-secondary button-block" type="submit">Delete my account</button><p class="form-message" role="alert"></p></div>
+      </form>${links}`);
+    wire(document.querySelector("#delete-form"), async (values) => {
+      if (String(values.confirm || "").trim() !== "DELETE") throw new Error("Type DELETE (capital letters) to confirm.");
+      const body = { password: values.password };
+      if (values.code) body.code = values.code;
+      const r = await api("/auth/delete-account", body, token);
+      sessionStorage.removeItem(TOKEN_KEY);
+      const remote = (r.remoteNotDeleted || []).map((x) => `<li>${esc(x.service)}: ${esc(x.what)}</li>`).join("");
+      page("Your account is deleted", `Workspaces deleted: ${esc(r.workspacesDeleted)}. Workspaces left: ${esc(r.workspacesLeft)}. Files deleted: ${esc(r.filesDeleted)}. Certificates revoked: ${esc(r.certificatesRevoked)}${r.certificatesNotRevoked ? ` (not revoked: ${esc(r.certificatesNotRevoked)})` : ""}.`,
+        `<div id="delete-done">${remote ? `<p class="small"><strong>Not deleted (no delete call on those services):</strong></p><ul class="small">${remote}</ul><p class="small">Email <a href="mailto:hello@rootsystems.app">hello@rootsystems.app</a> to have them removed.</p>` : ""}</div>`);
+    });
+  }
+
+  window.addEventListener("hashchange", () => window.location.reload());
   const hash = window.location.hash.replace(/^#/, "");
   const [kind, token] = hash.split("=");
   if ((kind === "verify" || kind === "reset") && token) {
@@ -138,5 +168,6 @@
     else reset(token);
   } else if (kind === "change") change();
   else if (kind === "2fa") twoFactor();
+  else if (kind === "delete") deleteAccountPage();
   else forgot();
 })();

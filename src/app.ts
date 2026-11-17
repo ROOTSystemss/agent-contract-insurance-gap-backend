@@ -136,6 +136,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.decorate("store", store);
   const documentService = new DocumentService(store, storage, config);
   app.decorate("documentService", documentService);
+  app.decorate("documentStorage", storage); // account deletion removes a deleted workspace's files (S-14)
   const oauthCodes = new OAuthCodeStore(config.ATLAS_OAUTH_CODE_TTL_MS);
   app.decorate("oauthCodes", oauthCodes);
   app.decorate(

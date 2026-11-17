@@ -927,6 +927,73 @@ export class PrismaStore implements Store {
     ]);
   }
 
+  // ---- Account deletion (S-14) ----
+  async listMembershipsForUser(userId: string): Promise<OrganizationMember[]> {
+    const rows = await this.client.organizationMember.findMany({ where: { userId }, orderBy: { createdAt: "asc" } });
+    return rows.map((row) => ({ ...row, createdAt: iso(row.createdAt) }));
+  }
+
+  async listConsoleCertificateIds(organizationId: string): Promise<string[]> {
+    const rows = await this.client.consoleCertificate.findMany({ where: { organizationId }, select: { jti: true }, orderBy: { createdAt: "desc" } });
+    return rows.map((r) => r.jti);
+  }
+
+  async deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }> {
+    const documents = await this.client.document.findMany({ where: { organizationId }, select: { storageKey: true } });
+    // Same order as reset(): rows that RESTRICT a delete (analysis -> agent profile, analysis document -> document,
+    // document -> uploader, audit event -> actor) go before the rows they point at.
+    await this.client.$transaction([
+      this.client.evidenceReceipt.deleteMany({ where: { organizationId } }),
+      this.client.consoleSigner.deleteMany({ where: { organizationId } }),
+      this.client.consoleSubscription.deleteMany({ where: { organizationId } }),
+      this.client.consoleCertificate.deleteMany({ where: { organizationId } }),
+      this.client.serviceLink.deleteMany({ where: { organizationId } }),
+      this.client.auditEvent.deleteMany({ where: { organizationId } }),
+      this.client.finding.deleteMany({ where: { organizationId } }),
+      this.client.analysisDocument.deleteMany({ where: { analysis: { organizationId } } }),
+      this.client.analysis.deleteMany({ where: { organizationId } }),
+      this.client.documentSegment.deleteMany({ where: { organizationId } }),
+      this.client.document.deleteMany({ where: { organizationId } }),
+      this.client.agentProfile.deleteMany({ where: { organizationId } }),
+      this.client.project.deleteMany({ where: { organizationId } }),
+      this.client.organizationMember.deleteMany({ where: { organizationId } }),
+      this.client.organization.deleteMany({ where: { id: organizationId } }),
+    ]);
+    return { storageKeys: documents.map((d) => d.storageKey) };
+  }
+
+  async removeMembership(organizationId: string, userId: string): Promise<void> {
+    await this.client.$transaction([
+      this.client.consoleSigner.deleteMany({ where: { organizationId, userId } }),
+      this.client.organizationMember.deleteMany({ where: { organizationId, userId } }),
+    ]);
+  }
+
+  async deleteOrAnonymiseUser(userId: string, tombstone: { email: string; passwordHash: string; at: string }): Promise<"deleted" | "anonymised"> {
+    const [docs, events] = await Promise.all([
+      this.client.document.count({ where: { uploaderId: userId } }),
+      this.client.auditEvent.count({ where: { actorId: userId } }),
+    ]);
+    if (docs + events === 0) {
+      await this.client.$transaction([
+        this.client.consoleSigner.deleteMany({ where: { userId } }),
+        this.client.user.deleteMany({ where: { id: userId } }), // cascades two-factor, one-time links, memberships
+      ]);
+      return "deleted";
+    }
+    await this.client.$transaction([
+      this.client.userTwoFactor.deleteMany({ where: { userId } }),
+      this.client.authToken.deleteMany({ where: { userId } }),
+      this.client.consoleSigner.deleteMany({ where: { userId } }),
+      this.client.organizationMember.deleteMany({ where: { userId } }),
+      this.client.user.update({
+        where: { id: userId },
+        data: { ...this.userEmailData(tombstone.email), name: this.vault.seal("Deleted user"), passwordHash: tombstone.passwordHash, emailVerifiedAt: null, passwordChangedAt: new Date(tombstone.at) },
+      }),
+    ]);
+    return "anonymised";
+  }
+
   async disconnect(): Promise<void> {
     await this.client.$disconnect();
   }

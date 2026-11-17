@@ -1,3 +1,4 @@
+import type { DocumentStorage } from "../documents/storage.js";
 import "@fastify/jwt";
 import type { AuthenticatedActor } from "../domain/types.js";
 import type { DocumentService } from "../documents/document-service.js";
@@ -15,6 +16,7 @@ declare module "fastify" {
   interface FastifyInstance {
     store: Store;
     documentService: DocumentService;
+    documentStorage: DocumentStorage;
     oauthCodes: OAuthCodeStore;
     // null when AUTHORITY_ATLAS_URL is not configured
     certificateVerifier: CertificateVerifier | null;

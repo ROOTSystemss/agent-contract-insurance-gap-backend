@@ -6,6 +6,7 @@ import type { Role, User } from "../domain/types.js";
 import { checkCode, hashRecovery, matchStep, newRecoveryCodes, newSecret, otpauthUri } from "../security/two-factor.js";
 import { AppError, unauthorized } from "../shared/errors.js";
 import { actor, audit, success } from "./helpers.js";
+import { deleteAccount } from "../security/account-deletion.js";
 import { loginSchema, registerSchema } from "./schemas.js";
 
 function safeUser(user: User) {
@@ -22,6 +23,7 @@ const codeField = z.string().trim().min(6).max(20);
 const twoFactorLoginBody = z.object({ pendingToken: z.string().min(10).max(1000), code: codeField });
 const codeBody = z.object({ code: codeField });
 const disableBody = z.object({ password: z.string().min(1).max(128), code: codeField });
+const deleteBody = z.object({ password: z.string().min(1).max(128), code: codeField.optional() });
 const privileged = (role: Role) => role === "owner" || role === "admin";
 
 // Same work whether or not the email exists, so response time does not reveal registered addresses.
@@ -215,6 +217,30 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await app.store.deleteTwoFactor(user.id);
     await audit(app.store, request, "user", user.id, "auth.two_factor_disabled");
     return success(request, { enabled: false });
+  });
+
+  // S-14 delete on request: the current password (and the two-factor code when it is on) deletes the account.
+  // Workspaces owned alone are deleted with all their data; see security/account-deletion.ts.
+  app.post("/delete-account", { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const input = deleteBody.parse(request.body);
+    const user = await app.store.getUser(actor(request).userId);
+    if (!user) throw unauthorized();
+    if (!app.loginAttempts.attempt(request.ip, user.email)) {
+      void reply.header("Retry-After", String(app.loginAttempts.retryAfter(request.ip, user.email)));
+      throw new AppError(429, "TOO_MANY_ATTEMPTS", "Too many wrong passwords. Wait 15 minutes and try again.");
+    }
+    if (!(await bcrypt.compare(input.password, user.passwordHash))) throw new AppError(403, "WRONG_PASSWORD", "The password is not correct.");
+    app.loginAttempts.succeeded(request.ip, user.email);
+    const record = await app.store.getTwoFactor(user.id);
+    if (record && record.enabledAt) {
+      if (!input.code) throw new AppError(400, "CODE_REQUIRED", "Enter the 6-digit code from your authenticator app (or a recovery code).");
+      const key = "2fa:" + user.id;
+      if (!app.twoFactorAttempts.attempt("account", key)) throw new AppError(429, "TOO_MANY_CODES", "Too many wrong codes. Wait 15 minutes and try again.");
+      if (!checkCode(record, input.code).ok) throw new AppError(400, "INVALID_CODE", "That code is not right, or was already used.");
+      app.twoFactorAttempts.succeeded("account", key);
+    }
+    const result = await deleteAccount({ store: app.store, storage: app.documentStorage, governance: app.governance }, user.id, request.id);
+    return success(request, { deleted: true, ...result });
   });
 
   app.get("/me", { preHandler: app.authenticate }, async (request) => {

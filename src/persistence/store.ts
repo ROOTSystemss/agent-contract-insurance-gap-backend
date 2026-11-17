@@ -158,6 +158,22 @@ export interface Store {
   // Adds a new user to an existing workspace (team invite). Throws EMAIL_EXISTS if the email is taken.
   addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember>;
   reset(): Promise<void>;
+
+  // ---- Account deletion (safeguard S-14, delete on request) ----
+  // Every workspace membership the user has.
+  listMembershipsForUser(userId: string): Promise<OrganizationMember[]>;
+  // The agent certificate ids (jti) this workspace issued through the console, newest first.
+  listConsoleCertificateIds(organizationId: string): Promise<string[]>;
+  // Deletes a workspace and everything this service keeps for it (projects, agents, documents and their
+  // segments, analyses, findings, audit events, console links/certificates/subscription/signers, receipts).
+  // Returns the storage keys of its uploaded documents so the caller deletes the files too.
+  deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }>;
+  // Takes one person out of a workspace: their membership and their console signer enrolment.
+  removeMembership(organizationId: string, userId: string): Promise<void>;
+  // Deletes the user row when nothing else refers to it. When a surviving workspace still refers to it (documents
+  // the person uploaded, audit lines they wrote), the row stays as a tombstone: email, name and password replaced,
+  // two-factor, one-time links and memberships removed, every session ended. Returns which one happened.
+  deleteOrAnonymiseUser(userId: string, tombstone: { email: string; passwordHash: string; at: string }): Promise<"deleted" | "anonymised">;
 }
 
 export interface PersistedAnalysisResult {
