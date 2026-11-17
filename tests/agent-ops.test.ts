@@ -5,6 +5,7 @@ import { loadConfig } from "../src/config/env.js";
 import { MemoryStore } from "../src/persistence/memory-store.js";
 import { governanceFakes } from "./governance-fakes.js";
 import { impactFor, patternMatches } from "../src/api/console-agent-ops-routes.js";
+import { extractItems, proposeProfile } from "../src/governance/capability-import.js";
 
 // Agent operations (knock-out Phase 5 medium items): AD-057 approval gates, BM-41 approval inbox, BM-38 capability
 // import, N-AT-09 agent retirement. Fake Authority Atlas / Trust Proof (tests/governance-fakes.ts).
@@ -157,7 +158,56 @@ describe("agent operations on the console", () => {
       expect(late.statusCode).toBe(409);
     });
 
+  });
+
+  describe("BM-38 capability import (MCP, OpenAPI, IAM)", () => {
+    type Imported = { proposal: { capabilities: Record<string, boolean>; otherCapabilities: string[] }; needsHumanReview: string[]; notes: string[]; inputSha256: string; receiptSeq: number | null };
+    it("unit: MCP tools map to capabilities, extra groups and review", () => {
+      const { items } = extractItems("mcp", JSON.stringify({ tools: [{ name: "send_customer_email", description: "Email customers about their order" }, { name: "refund_payment", description: "Refund a card payment" }, { name: "weather", description: "Look up the weather" }] }));
+      const p = proposeProfile(items);
+      expect(p.capabilities).toMatchObject({ canCommunicateExternally: true });
+      expect(p.otherCapabilities.some((l) => /refund/.test(l))).toBe(true);
+      expect(p.unmatched.some((l) => /weather/.test(l))).toBe(true);
+    });
+
+    it("unit: OpenAPI operations and IAM actions are read; wildcards are flagged", () => {
+      const api = extractItems("openapi", JSON.stringify({ openapi: "3.0.0", paths: { "/invoices/{id}/pay": { post: { summary: "Pay an invoice" } }, "/records/{id}": { delete: { operationId: "deleteRecord" } } } }));
+      expect(api.items).toHaveLength(2);
+      expect(proposeProfile(api.items).otherCapabilities.length).toBeGreaterThanOrEqual(2);
+      const iam = extractItems("iam", JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["s3:DeleteObject", "ec2:*"] }, { Effect: "Deny", Action: "iam:*" }] }));
+      expect(iam.items.map((i) => i.split(":")[0])).toEqual(["s3", "ec2"]);
+      expect(iam.notes.join(" ")).toMatch(/full administrative access/);
+      expect(() => extractItems("openapi", "openapi: 3.0.0")).toThrow(/must be JSON/);
+    });
+
+    it("POST /agents/:id/capability-import proposes (nothing applied), signs a snapshot, keeps no raw input", async () => {
+      const content = JSON.stringify({ tools: [{ name: "pay_invoice", description: "Pay supplier invoices" }, { name: "lookup", description: "Look something up secret-marker-xyz" }] });
+      const res = await call("POST", "/agents/pay-bot/capability-import", ownerToken, { format: "mcp", content });
+      expect(res.statusCode).toBe(201);
+      const body = data<Imported>(res);
+      expect(body.proposal.otherCapabilities.join(" ")).toMatch(/pay_invoice/);
+      expect(body.needsHumanReview.join(" ")).toMatch(/lookup/);
+      expect(body.notes.join(" ")).toMatch(/nothing was changed in the agent profile/);
+      const signed = (await receiptsOf("capability-snapshot")).at(-1)!;
+      expect((signed.receipt.facts as Record<string, unknown>).inputSha256).toBe(body.inputSha256);
+      expect((await publicVerify(signed.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify({ ...signed.receipt, facts: { ...(signed.receipt.facts as object), matched: 99 } })).verdict).toBe("FAIL");
+      const snaps = data<Array<Record<string, unknown>>>(await call("GET", "/agents/pay-bot/capability-snapshots", ownerToken));
+      expect(snaps.length).toBe(1);
+      expect(JSON.stringify(snaps)).not.toContain("secret-marker-xyz");
+    });
+
+    it("bad input is refused; viewers cannot import; other workspaces see nothing", async () => {
+      expect((await call("POST", "/agents/pay-bot/capability-import", ownerToken, { format: "mcp", content: "not json" })).statusCode).toBe(400);
+      expect((await call("POST", "/agents/pay-bot/capability-import", ownerToken, { format: "mcp", content: JSON.stringify({ tools: [] }) })).statusCode).toBe(400);
+      expect((await call("POST", "/agents/pay-bot/capability-import", viewerToken, { format: "mcp", content: JSON.stringify({ tools: [{ name: "a" }] }) })).statusCode).toBe(403);
+      expect(data<unknown[]>(await call("GET", "/agents/pay-bot/capability-snapshots", otherToken))).toEqual([]);
+    });
+  });
+
+  describe("BM-41 approval inbox (isolation)", () => {
     it("another workspace cannot see or decide this workspace's requests", async () => {
+      const requestId = data<{ requests: Array<{ requestId: string }> }>(await call("GET", "/action-approvals", ownerToken)).requests[0]!.requestId;
       expect((await call("GET", `/action-approvals/${requestId}`, otherToken)).statusCode).toBe(404);
       expect((await call("POST", `/action-approvals/${requestId}/decide`, otherToken, { decision: "decline", note: "not mine" })).statusCode).toBe(404);
       expect(data<{ requests: unknown[] }>(await call("GET", "/action-approvals", otherToken)).requests).toEqual([]);

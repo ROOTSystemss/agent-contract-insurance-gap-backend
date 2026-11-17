@@ -7,6 +7,7 @@ import { AppError, notFound } from "../shared/errors.js";
 import { recordReceipt } from "../evidence/receipts.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
 import { agentIdSchema, sha256Hex } from "./console-records-routes.js";
+import { extractItems, proposeProfile } from "../governance/capability-import.js";
 
 // Agent operations on the Agent Governance console (knock-out Phase 5 medium items, 2026-11-17).
 //
@@ -225,5 +226,52 @@ export const consoleAgentOpsRoutes: FastifyPluginAsync = async (app) => {
     await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "approval-request", key: requestId, data: { ...updated, note: input.note } });
     await audit(app.store, request, "organization", organization.id, "console.action_approval_decided", { requestId, decision: status });
     return reply.code(200).send(success(request, view(updated)));
+  });
+
+  // ---------- BM-38 / N-AT-07 capability import ----------
+  // Reads an MCP tool list, an OpenAPI JSON document or an AWS IAM policy (pasted text, never fetched), proposes the
+  // agent profile's capabilities from it with the engine's fixed rules, and seals what was read as a signed
+  // "capability-snapshot" receipt (input fingerprint, counts, matched capabilities). The raw input is not kept.
+  // Nothing is applied automatically: a person copies the proposal into the profile form.
+  const importBody = z.object({ format: z.enum(["mcp", "openapi", "iam"]), content: z.string().min(2).max(1_000_000) }).strict();
+
+  app.post("/agents/:agentId/capability-import", async (request, reply) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    const { agentId } = z.object({ agentId: agentIdSchema }).parse(request.params);
+    const { format, content } = importBody.parse(request.body);
+    let extracted: { items: string[]; notes: string[] };
+    try {
+      extracted = extractItems(format, content);
+    } catch (error) {
+      throw new AppError(400, "IMPORT_UNREADABLE", (error as Error).message);
+    }
+    if (!extracted.items.length) throw new AppError(400, "IMPORT_EMPTY", "Nothing to read: the input lists no tools, operations or allowed actions.");
+    const proposal = proposeProfile(extracted.items);
+    const at = new Date().toISOString();
+    const inputSha256 = sha256Hex(content);
+    const capabilityKeys = Object.keys(proposal.capabilities).sort();
+    const snapshot = { agentId, format, inputSha256, at, items: extracted.items.length, matched: proposal.matches.length, unmatched: proposal.unmatched.length, capabilities: capabilityKeys, otherCapabilities: proposal.otherCapabilities.length };
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "capability-snapshot", key: `${agentId}:${at}`, data: snapshot });
+    await audit(app.store, request, "organization", organization.id, "console.capability_import", { agentId, format, items: extracted.items.length });
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "capability-snapshot", subject: { kind: "agent", id: agentId },
+      facts: { format, inputSha256, items: snapshot.items, matched: snapshot.matched, unmatched: snapshot.unmatched, capabilities: capabilityKeys, otherCapabilities: snapshot.otherCapabilities, at },
+    }, request.log);
+    return reply.code(201).send(success(request, {
+      agentId, format, inputSha256,
+      proposal: { capabilities: proposal.capabilities, otherCapabilities: proposal.otherCapabilities },
+      matches: proposal.matches.slice(0, 500),
+      needsHumanReview: proposal.unmatched.slice(0, 500),
+      notes: [...extracted.notes, "Proposal only: nothing was changed in the agent profile. Copy what applies into the profile form.", "Matching uses fixed keyword rules; an item that matches nothing is listed for review, never treated as harmless."],
+      receiptSeq: receipt?.seq ?? null,
+    }));
+  });
+
+  app.get("/agents/:agentId/capability-snapshots", async (request) => {
+    const organization = await workspace(request);
+    const { agentId } = z.object({ agentId: agentIdSchema }).parse(request.params);
+    const rows = await app.store.listConsoleRecords(organization.id, "capability-snapshot");
+    return success(request, rows.filter((r) => (r.data as { agentId?: string }).agentId === agentId).map((r) => r.data).reverse());
   });
 };
