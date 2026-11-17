@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Organization } from "../domain/types.js";
 import type { AtlasCertificate } from "../governance/gateway.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AppError, notFound } from "../shared/errors.js";
 import { POLICY_TEMPLATES } from "../governance/policy-templates.js";
 import { checkChain, recordReceipt } from "../evidence/receipts.js";
@@ -382,6 +382,70 @@ export const consoleRecordsRoutes: FastifyPluginAsync = async (app) => {
         return { userId: m.userId, name: m.user.name, role: m.role, acknowledgedAt: (ack?.data as { at?: string } | undefined)?.at ?? null };
       }),
     });
+  });
+
+  // ---------- AD-061 incident log for agent mistakes ----------
+  // What the agent did wrong, who had approved the action, the fix. Text sealed at rest; each step a signed receipt
+  // carrying ids, dates, the impact category and SHA-256 hashes of the text, never the text.
+  const IMPACTS = ["money", "data", "customer", "decision-about-a-person", "internal-only", "other"] as const;
+  const incidentBody = z
+    .object({
+      agentId: agentIdSchema,
+      occurredAt: z.iso.datetime(),
+      impact: z.enum(IMPACTS),
+      whatHappened: z.string().trim().min(10).max(2000),
+      approvedBy: z.string().trim().max(120).default(""),
+      ledgerActionIds: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
+      immediateAction: z.string().trim().max(1000).default(""),
+    })
+    .strict();
+  const closeBody = z.object({ fix: z.string().trim().min(10).max(2000), rootCause: z.string().trim().max(2000).default("") }).strict();
+  const incidentParams = z.object({ id: z.string().uuid() });
+
+  app.get("/incidents", async (request) => {
+    const organization = await workspace(request);
+    const rows = await app.store.listConsoleRecords(organization.id, "incident");
+    return success(request, rows.map((r) => ({ id: r.key, ...r.data })).reverse());
+  });
+
+  app.post("/incidents", async (request, reply) => {
+    requireRole(request, "analyst");
+    const organization = await workspace(request);
+    const input = incidentBody.parse(request.body);
+    if (Date.parse(input.occurredAt) > Date.now() + 5 * 60_000) throw new AppError(400, "VALIDATION_ERROR", "When it happened cannot be in the future.");
+    const { agents } = await inventory(organization);
+    if (!agents.some((a) => a.agentId === input.agentId)) throw notFound("Agent");
+    const id = randomUUID();
+    const recordedAt = new Date().toISOString();
+    const recordedBy = actor(request).userId;
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "incident", key: id, data: { ...input, status: "open", recordedAt, recordedBy } });
+    await audit(app.store, request, "organization", organization.id, "console.agent_incident_recorded", { incidentId: id, agentId: input.agentId });
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "agent-incident-recorded", subject: { kind: "incident", id },
+      facts: { agentId: input.agentId, occurredAt: input.occurredAt, impact: input.impact, ledgerActions: input.ledgerActionIds.length, whatHappenedSha256: sha256Hex(input.whatHappened), recordedBy },
+    }, request.log);
+    return reply.code(201).send(success(request, { id, status: "open", recordedAt, receiptSeq: receipt?.seq ?? null }));
+  });
+
+  app.post("/incidents/:id/close", async (request) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { id } = incidentParams.parse(request.params);
+    const input = closeBody.parse(request.body);
+    const saved = await app.store.getConsoleRecord(organization.id, "incident", id);
+    if (!saved) throw notFound("Incident");
+    const current = saved.data as { status?: string; agentId: string; occurredAt: string };
+    if (current.status === "closed") throw new AppError(409, "ALREADY_CLOSED", "This incident is already closed.");
+    const closedAt = new Date().toISOString();
+    const closedBy = actor(request).userId;
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "incident", key: id, data: { ...saved.data, status: "closed", fix: input.fix, rootCause: input.rootCause, closedAt, closedBy } });
+    await audit(app.store, request, "organization", organization.id, "console.agent_incident_closed", { incidentId: id });
+    const daysOpen = Math.max(0, Math.round((Date.parse(closedAt) - Date.parse(current.occurredAt)) / 864e5));
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "agent-incident-closed", subject: { kind: "incident", id },
+      facts: { agentId: current.agentId, fixSha256: sha256Hex(input.fix), rootCauseSha256: input.rootCause ? sha256Hex(input.rootCause) : null, daysSinceOccurred: daysOpen, closedBy },
+    }, request.log);
+    return success(request, { id, status: "closed", closedAt, receiptSeq: receipt?.seq ?? null });
   });
 
   app.delete("/agents/:agentId", async (request) => {

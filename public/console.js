@@ -928,6 +928,43 @@
     load();
   });
 
+  // AD-061 incident log for agent mistakes
+  RECORD_SECTIONS.push(function (content) {
+    var p = recordsPanel("Agent incident log", "What an agent did wrong, who had approved the action, and the fix. Recording and closing each become a signed receipt (the text stays here, encrypted; only its fingerprint is in the receipt).");
+    content.appendChild(p.panel);
+    var table = h("tbody");
+    var f = { agent: h("input", { class: "input mono", placeholder: "invoice-bot", "aria-label": "Agent id" }), when: h("input", { class: "input", type: "datetime-local", "aria-label": "When it happened" }), impact: h("select", { class: "input", "aria-label": "Impact" }, ["money", "data", "customer", "decision-about-a-person", "internal-only", "other"].map(function (x) { return h("option", { value: x, text: x }); })), what: h("textarea", { class: "input", rows: "3", "aria-label": "What happened" }), approved: h("input", { class: "input", placeholder: "Payables lead", "aria-label": "Who approved the action" }), action: h("input", { class: "input", placeholder: "Payment recalled from the bank", "aria-label": "Immediate action" }) };
+    p.body.appendChild(h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["When", "Agent", "Impact", "What happened", "Status", ""].map(function (x) { return h("th", { text: x }); }))), table)));
+    p.body.appendChild(h("details", null, h("summary", { text: "Record an incident" }),
+      field("Agent id", f.agent, "The agent that made the mistake. Example: invoice-bot"),
+      field("When it happened", f.when, "Your local time; it cannot be in the future."),
+      field("Impact", f.impact, "The main kind of harm: money, data, a customer, a decision about a person, internal only, or other."),
+      field("What happened", f.what, "Plain facts, at least 10 characters. Do not paste personal data."),
+      field("Who approved the action (role)", f.approved, "The role that had approved this kind of action, if any."),
+      field("Immediate action", f.action, "What was done straight away to limit the harm."),
+      h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+        if (!f.when.value) { toast("Enter when it happened", true); return; }
+        api("/console/incidents", { method: "POST", body: { agentId: f.agent.value.trim(), occurredAt: new Date(f.when.value).toISOString(), impact: f.impact.value, whatHappened: f.what.value.trim(), approvedBy: f.approved.value.trim(), immediateAction: f.action.value.trim() } })
+          .then(function () { toast("Incident recorded; a signed receipt was issued"); load(); }).catch(function (err) { toast(err.message, true); });
+      } }, "Record incident")));
+    function load() {
+      api("/console/incidents").then(function (rows) {
+        clear(table);
+        if (!rows.length) { table.appendChild(h("tr", null, h("td", { colspan: "6", class: "faint", text: "No incidents recorded." }))); return; }
+        rows.forEach(function (i) {
+          table.appendChild(h("tr", null, h("td", { class: "mono faint", style: "font-size:12px", text: i.occurredAt.slice(0, 16).replace("T", " ") }), h("td", { class: "mono", text: i.agentId }), h("td", { text: i.impact }), h("td", { text: short(i.whatHappened, 80) }),
+            h("td", null, h("span", { class: "pill pill--" + (i.status === "closed" ? "within" : "outside"), text: i.status })),
+            h("td", null, i.status === "closed" ? null : h("button", { class: "btn btn--sm", onclick: function () {
+              var fix = window.prompt("The fix (at least 10 characters):", "");
+              if (!fix) return;
+              api("/console/incidents/" + i.id + "/close", { method: "POST", body: { fix: fix.trim() } }).then(function () { toast("Closed; a signed receipt was issued"); load(); }).catch(function (err) { toast(err.message, true); });
+            } }, "Close with fix"))));
+        });
+      }).catch(function (err) { toast(err.message, true); });
+    }
+    load();
+  });
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {

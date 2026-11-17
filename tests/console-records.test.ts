@@ -251,6 +251,42 @@ describe("console governance records", () => {
     });
   });
 
+  describe("AD-061 incident log for agent mistakes", () => {
+    let incidentId: string;
+    it("records an incident: text kept, signed receipt carries hashes only", async () => {
+      const occurredAt = new Date(Date.now() - 2 * 864e5).toISOString();
+      const res = await call("POST", "/incidents", ownerToken, { agentId: "invoice-bot", occurredAt, impact: "money", whatHappened: "Paid a duplicate invoice INV-2201 twice within the limit.", approvedBy: "Payables lead", ledgerActionIds: ["17"], immediateAction: "Payment recalled from the bank." });
+      expect(res.statusCode).toBe(201);
+      incidentId = data<{ id: string }>(res).id;
+      const list = data<Array<{ id: string; whatHappened: string; status: string }>>(await call("GET", "/incidents", ownerToken));
+      expect(list[0]).toMatchObject({ id: incidentId, status: "open", whatHappened: expect.stringContaining("duplicate invoice") });
+      const r = (await receipts()).receipts.find((x) => x.type === "agent-incident-recorded")!;
+      expect(r.receipt.facts).toMatchObject({ agentId: "invoice-bot", impact: "money", ledgerActions: 1 });
+      expect(JSON.stringify(r.receipt)).not.toMatch(/duplicate invoice|Payables lead/);
+      expect((await publicVerify(r.receipt)).verdict).toBe("PASS");
+    });
+
+    it("an admin closes it with the fix; closing twice is refused; the closing receipt verifies", async () => {
+      expect((await call("POST", `/incidents/${incidentId}/close`, viewerToken, { fix: "Added a duplicate-invoice check." })).statusCode).toBe(403);
+      const res = await call("POST", `/incidents/${incidentId}/close`, ownerToken, { fix: "Added a duplicate-invoice check before payment.", rootCause: "No idempotency key on invoices." });
+      expect(res.statusCode).toBe(200);
+      expect((await call("POST", `/incidents/${incidentId}/close`, ownerToken, { fix: "Again, a second close." })).statusCode).toBe(409);
+      const r = (await receipts()).receipts.find((x) => x.type === "agent-incident-closed")!;
+      expect(r.receipt.facts).toMatchObject({ agentId: "invoice-bot", daysSinceOccurred: 2 });
+      expect((await publicVerify(r.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify(tamper(r.receipt))).verdict).toBe("FAIL");
+    });
+
+    it("validates: future date, unknown agent, bad impact; another workspace sees nothing", async () => {
+      const future = new Date(Date.now() + 864e5).toISOString();
+      expect((await call("POST", "/incidents", ownerToken, { agentId: "invoice-bot", occurredAt: future, impact: "money", whatHappened: "Something went wrong here." })).statusCode).toBe(400);
+      expect((await call("POST", "/incidents", ownerToken, { agentId: "ghost-bot", occurredAt: new Date().toISOString(), impact: "money", whatHappened: "Something went wrong here." })).statusCode).toBe(404);
+      expect((await call("POST", "/incidents", ownerToken, { agentId: "invoice-bot", occurredAt: new Date().toISOString(), impact: "catastrophe", whatHappened: "Something went wrong here." })).statusCode).toBe(400);
+      expect(data<unknown[]>(await call("GET", "/incidents", otherToken))).toEqual([]);
+      expect((await call("POST", `/incidents/${incidentId}/close`, otherToken, { fix: "Not my incident at all." })).statusCode).toBe(404);
+    });
+  });
+
   describe("account deletion removes the records", () => {
     it("deleting the sole owner's account deletes the workspace's console records", async () => {
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/register", payload: { email: "records-del@example.com", name: "Del", organizationName: "Del Org", password: "Correct Horse Battery 123!" } });
