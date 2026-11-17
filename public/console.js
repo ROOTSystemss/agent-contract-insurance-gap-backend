@@ -279,6 +279,7 @@
 
   // ---------- shell ----------
   var NAV = [
+    { id: "start", label: "Get started", icon: "bolt" },
     { id: "overview", label: "Overview", icon: "overview" },
     { id: "agents", label: "Agents & certificates", icon: "agents" },
     { id: "ledger", label: "Action ledger", icon: "ledger" },
@@ -287,7 +288,7 @@
     { id: "records", label: "Governance records", icon: "approvals" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
-  var TITLES = { overview: "Overview", agents: "Agents & certificates", ledger: "Action ledger", approvals: "Approvals", coverage: "Contract & insurance coverage", records: "Governance records", settings: "Settings" };
+  var TITLES = { start: "Get started · one connected flow", overview: "Overview", agents: "Agents & certificates", ledger: "Action ledger", approvals: "Approvals", coverage: "Contract & insurance coverage", records: "Governance records", settings: "Settings" };
 
   function renderShell() {
     var me = state.me || {};
@@ -299,9 +300,9 @@
       h("div", { class: "sidebar__brand" }, h("img", { src: "/rs-logo.svg", alt: "" }), h("div", null, h("strong", { text: "RootSystems" }), h("span", { text: "Agent Governance" }))),
       h("nav", { class: "nav" },
         h("div", { class: "nav__label", text: "Control" }),
-        NAV.slice(0, 4).map(navLink),
+        NAV.slice(0, 5).map(navLink),
         h("div", { class: "nav__label", text: "Assurance" }),
-        NAV.slice(4).map(navLink)),
+        NAV.slice(5).map(navLink)),
       h("div", { class: "sidebar__foot" },
         h("div", { class: "pq-badge" }, icon("lock"), h("div", null, h("strong", { text: "Post-quantum signed" }), h("span", { text: "ML-DSA-65 · SHA-512" }))),
         h("div", { class: "who" },
@@ -353,7 +354,7 @@
     var content = renderShell();
     if (state.status && (!state.status.configured.atlas || !state.status.configured.trustProof)) return viewNotConfigured(content);
     if (state.status && !state.status.linked && state.route !== "coverage") return viewActivate(content);
-    ({ overview: viewOverview, agents: viewAgents, ledger: viewLedger, approvals: viewApprovals, coverage: viewCoverage, records: viewRecords, settings: viewSettings })[state.route](content);
+    ({ start: viewStart, overview: viewOverview, agents: viewAgents, ledger: viewLedger, approvals: viewApprovals, coverage: viewCoverage, records: viewRecords, settings: viewSettings })[state.route](content);
   }
   window.addEventListener("hashchange", function () { if (state.me) render(); });
 
@@ -1021,6 +1022,134 @@
     load();
   });
 
+  // ----- N-AT-06 one connected flow: describe -> certificate -> gate policy -> runtime gate -> ledger -> statement -----
+  // Every step's state comes from GET /console/connected-flow, which reads the real sources each time. Nothing here
+  // marks a step done; the only thing saved is the chosen agent id and the step you were on (to resume).
+  var FLOW_STATE = { observed: { label: "Observed", tone: "within" }, "not-observed": { label: "Not verified", tone: "pq" }, unavailable: { label: "Could not check", tone: "outside" } };
+  function viewStart(content) {
+    var isAdmin = state.me && (state.me.role === "owner" || state.me.role === "admin");
+    var canEdit = state.me && state.me.role !== "viewer";
+    var shownKey = null; // a runtime key just created here: kept only in this page, never stored
+    var flow = null;
+    var head = h("div", { class: "panel", style: "margin-bottom:18px" });
+    var list = h("div", { id: "flow-steps" });
+    content.appendChild(head);
+    content.appendChild(list);
+    list.appendChild(h("div", { class: "empty" }, icon("loader", "spin"), h("p", { text: "Reading each step from its source…" })));
+
+    function load() {
+      return api("/console/connected-flow").then(function (f) { flow = f; draw(); }).catch(function (err) {
+        clear(list).appendChild(h("div", { class: "panel" }, h("div", { class: "empty" }, icon("alert"), h("h4", { text: "The flow could not load" }), h("p", { text: err.message }), h("button", { class: "btn", onclick: load }, icon("refresh"), "Try again"))));
+      });
+    }
+    function save(body) {
+      return api("/console/connected-flow", { method: "PUT", body: body }).then(function (f) { flow = f; draw(); }).catch(function (err) { toast(err.message, true); });
+    }
+    function draw() {
+      var agentInput = h("input", { class: "input mono", id: "flow-agent", placeholder: "invoice-bot", value: flow.agentId || "", "aria-label": "Agent id", style: "max-width:240px" });
+      clear(head).appendChild(h("div", { class: "panel__head" },
+        h("div", null,
+          h("h3", { text: "One connected flow · " + flow.observed + " of " + flow.total + " observed" }),
+          h("p", { text: flow.note })),
+        h("div", { class: "actions" }, h("button", { class: "btn btn--sm", onclick: load }, icon("refresh"), "Check again"))));
+      head.appendChild(h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:0 18px 16px" },
+        h("label", { for: "flow-agent", text: "Agent this flow follows" }), agentInput,
+        canEdit ? h("button", { class: "btn btn--sm", onclick: function () { var v = agentInput.value.trim(); save({ agentId: v ? v : null }); } }, "Follow this agent") : null,
+        h("small", { class: "faint", text: flow.agentId ? "Steps 2, 4 and 5 look for this agent only." : "Leave empty to accept any agent." })));
+      if (flow.complete) head.appendChild(h("p", { class: "muted", style: "padding:0 18px 16px", text: "Every step was observed in its source. The flow is connected." }));
+      clear(list);
+      flow.steps.forEach(function (s, i) {
+        var st = FLOW_STATE[s.state] || FLOW_STATE.unavailable;
+        var body = h("div", { style: "padding:4px 18px 16px" }, h("p", { text: s.detail }), s.observedAt ? h("p", { class: "faint", style: "font-size:12px", text: "Seen " + date(s.observedAt) + " (" + ago(s.observedAt) + ")" }) : null, tools(s));
+        var box = h("details", { class: "panel", style: "margin-bottom:12px", "data-flow-step": s.id, open: s.id === flow.resumeAt },
+          h("summary", { style: "display:flex;gap:12px;align-items:center;padding:14px 18px;cursor:pointer" },
+            h("strong", { text: (i + 1) + ". " + s.title }),
+            h("span", { class: "pill pill--" + st.tone, text: st.label })),
+          body);
+        box.addEventListener("toggle", function () { if (box.open && canEdit && flow.resumeAt !== s.id) { flow.resumeAt = s.id; api("/console/connected-flow", { method: "PUT", body: { currentStep: s.id } }).catch(function () {}); } });
+        list.appendChild(box);
+      });
+    }
+    function linkButton(text, href) { return h("a", { class: "btn btn--sm", href: href }, text, icon("arrow")); }
+    function tools(s) {
+      if (s.id === "describe") return linkButton("Open a project and use the wizard", "/app");
+      if (s.id === "certificate") return state.status && state.status.linked && canEdit ? h("button", { class: "btn btn--primary btn--sm", onclick: function () { openIssueDrawer(); } }, icon("plus"), "Issue certificate") : linkButton("Agents & certificates", "#/agents");
+      if (s.id === "gate-policy") return gateTools();
+      if (s.id === "runtime-gate") return runtimeTools();
+      if (s.id === "ledger") return h("div", null, h("p", { class: "faint", style: "font-size:12.5px", text: "Your runtime reports each action to the ledger with the workspace's Action Ledger key (Settings, Connect your agent). With the runtime gate, pass it as the ledger option so every gate outcome is recorded too." }), linkButton("Open the action ledger", "#/ledger"));
+      if (s.id === "statement") return statementTools();
+      return null;
+    }
+    function gateTools() {
+      var host = h("div");
+      if (!isAdmin) { host.appendChild(h("p", { class: "faint", text: "Only workspace owners and admins can set the gate policy." })); return host; }
+      var def = h("select", { class: "input", "aria-label": "Default impact", style: "max-width:160px" }, ["low", "medium", "high"].map(function (v) { return h("option", { value: v, text: v }); }));
+      var rulesBox = h("ul", { class: "faint", style: "font-size:12.5px" });
+      var rules = [];
+      var action = h("input", { class: "input mono", placeholder: "invoices:*", "aria-label": "Rule action", style: "max-width:180px" });
+      var impact = h("select", { class: "input", "aria-label": "Rule impact", style: "max-width:120px" }, ["low", "medium", "high"].map(function (v) { return h("option", { value: v, text: v }); }));
+      var above = h("input", { class: "input", type: "number", min: "0", placeholder: "high above $", "aria-label": "High impact above (USD)", style: "max-width:140px" });
+      function drawRules() {
+        clear(rulesBox);
+        if (!rules.length) rulesBox.appendChild(h("li", { text: "No rules: every action gets the default impact." }));
+        rules.forEach(function (r, i) {
+          rulesBox.appendChild(h("li", null, r.action + " → " + r.impact + (r.highAboveUsd !== undefined ? " (high above " + money(r.highAboveUsd) + ")" : "") + " ", h("button", { class: "btn btn--ghost btn--sm", onclick: function () { rules.splice(i, 1); drawRules(); } }, "remove")));
+        });
+      }
+      api("/console/gates").then(function (r) { var p = (r && r.policy) || {}; def.value = p.defaultImpact || "medium"; rules = (p.rules || []).slice(); drawRules(); }).catch(function () { drawRules(); });
+      host.appendChild(h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0" }, h("span", { text: "Default impact" }), def));
+      host.appendChild(rulesBox);
+      host.appendChild(h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0" }, action, impact, above,
+        h("button", { class: "btn btn--sm", onclick: function () {
+          var a = action.value.trim();
+          if (!a) return toast("Name an action, a 'prefix:*' pattern, or *", true);
+          var rule = { action: a, impact: impact.value };
+          if (above.value !== "") rule.highAboveUsd = Number(above.value);
+          rules.push(rule); action.value = ""; above.value = ""; drawRules();
+        } }, "Add rule")));
+      host.appendChild(h("p", { class: "faint", style: "font-size:12px", text: "High impact asks a person first (Approvals). Low and medium are allowed when the certificate allows them; anything outside the certificate is blocked." }));
+      host.appendChild(h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+        api("/console/gates", { method: "PUT", body: { defaultImpact: def.value, rules: rules } }).then(function () { toast("Gate policy saved and signed"); load(); }).catch(function (err) { toast(err.message, true); });
+      } }, "Save the gate policy"));
+      return host;
+    }
+    function runtimeTools() {
+      var host = h("div");
+      var snip = flow.snippet;
+      var env = shownKey ? "RUNTIME_GATE_KEY=" + shownKey : snip.env;
+      host.appendChild(h("p", { class: "faint", style: "font-size:12.5px", text: "Your agent runtime asks the gate before it acts. It fails closed: if the console cannot be reached, the action is not allowed. The package is sdk/runtime-gate (zero dependencies, Node 18+)." }));
+      host.appendChild(h("pre", { class: "codeblock", id: "flow-env", text: env }));
+      if (shownKey) host.appendChild(h("p", { class: "muted", role: "alert", text: "Copy this key now: it is shown only once and is not stored in this page or the console." }));
+      host.appendChild(h("div", { style: "display:flex;gap:8px;margin:8px 0" }, h("button", { class: "btn btn--sm", onclick: function () { copy(env, "Key line copied"); } }, icon("copy"), "Copy")));
+      host.appendChild(h("pre", { class: "codeblock", id: "flow-snippet", text: snip.node }));
+      host.appendChild(h("div", { style: "display:flex;gap:8px;margin:8px 0;flex-wrap:wrap" },
+        h("button", { class: "btn btn--sm", onclick: function () { copy(snip.node, "Snippet copied"); } }, icon("copy"), "Copy snippet"),
+        h("button", { class: "btn btn--sm", onclick: function () { copy(snip.curl, "curl test copied"); } }, icon("copy"), "Copy a curl test")));
+      if (isAdmin) {
+        var name = h("input", { class: "input", placeholder: "Payments runtime", "aria-label": "Runtime key name", style: "max-width:220px" });
+        host.appendChild(h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, name,
+          h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+            api("/console/runtime-keys", { method: "POST", body: { name: name.value.trim() || "Agent runtime" } }).then(function (k) { shownKey = k.key; toast("Runtime key created"); draw(); }).catch(function (err) { toast(err.message, true); });
+          } }, icon("plus"), "Create a runtime key")));
+      } else host.appendChild(h("p", { class: "faint", text: "Ask a workspace owner or admin to create a runtime key." }));
+      return host;
+    }
+    function statementTools() {
+      if (!canEdit) return linkButton("Governance records", "#/records");
+      return h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+        h("button", { class: "btn btn--primary btn--sm", onclick: function () {
+          var month = new Date().toISOString().slice(0, 7);
+          api("/console/statements", { method: "POST", body: { month: month } }).then(function (signed) {
+            var blob = new Blob([JSON.stringify(signed, null, 2)], { type: "application/json" });
+            var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "agent-statement-" + month + ".json"; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+            toast("Statement signed and downloaded"); load();
+          }).catch(function (err) { toast(err.message, true); });
+        } }, "Make this month's signed statement"),
+        linkButton("Governance records", "#/records"));
+    }
+    load();
+  }
+
   // ----- approvals: named people sign with their own keys -----
   var STATUS_LABEL = { pending: "waiting", partially_signed: "partly signed", fully_signed: "approved", declined: "declined" };
   function statusPill(status) {
@@ -1455,6 +1584,7 @@
   function openPalette() {
     if (document.querySelector(".palette")) return;
     var commands = [
+      { label: "Go to Get started (one connected flow)", icon: "bolt", run: function () { location.hash = "#/start"; } },
       { label: "Go to Overview", icon: "overview", run: function () { location.hash = "#/overview"; } },
       { label: "Go to Agents & certificates", icon: "agents", run: function () { location.hash = "#/agents"; } },
       { label: "Go to Action ledger", icon: "ledger", run: function () { location.hash = "#/ledger"; } },

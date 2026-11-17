@@ -20,6 +20,7 @@ import { consoleRoutes } from "./api/console-routes.js";
 import { consoleRecordsRoutes } from "./api/console-records-routes.js";
 import { consoleAgentOpsRoutes } from "./api/console-agent-ops-routes.js";
 import { runtimeGateRoutes, runtimeKeyConsoleRoutes } from "./api/runtime-gate-routes.js";
+import { connectedFlowRoutes } from "./api/connected-flow-routes.js";
 import { createPqSigner, publicKeyInfo, type PqSigner } from "./crypto/pq-sign.js";
 import { assertKeyHistory, keyHistory } from "./crypto/key-history.js";
 import { agentRoutes, projectAgentRoutes } from "./api/agent-routes.js";
@@ -481,6 +482,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(consoleAgentOpsRoutes, { prefix: "/api/v1/console" }); // gates, approval inbox, capability import, retirement
   await app.register(runtimeKeyConsoleRoutes, { prefix: "/api/v1/console" }); // BM-40 runtime gate keys (admin)
   await app.register(runtimeGateRoutes, { prefix: "/api/v1/runtime" }); // BM-40 runtime gate (runtime key only)
+  await app.register(connectedFlowRoutes, { prefix: "/api/v1/console", publicBaseUrl: config.PUBLIC_BASE_URL }); // N-AT-06 one connected flow
   await app.register(billingWebhookRoutes, { prefix: "/api/v1/billing" });
 
   return app;
