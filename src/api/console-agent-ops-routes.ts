@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Organization } from "../domain/types.js";
 import type { AtlasCertificate } from "../governance/gateway.js";
 import { AppError, notFound } from "../shared/errors.js";
@@ -266,6 +266,87 @@ export const consoleAgentOpsRoutes: FastifyPluginAsync = async (app) => {
       notes: [...extracted.notes, "Proposal only: nothing was changed in the agent profile. Copy what applies into the profile form.", "Matching uses fixed keyword rules; an item that matches nothing is listed for review, never treated as harmless."],
       receiptSeq: receipt?.seq ?? null,
     }));
+  });
+
+  // ---------- N-AT-09 retire an agent, with proof (non-human identity link with Offboarding) ----------
+  // Retiring proves two things in one signed "agent-retired" receipt: Agent Certificates confirms the agent has NO
+  // active certificate (if it still has one, use the kill switch first; if certificates cannot be read, nothing is
+  // retired), and, optionally, an Offboarding Proof signed report that covers the agent's non-human accounts.
+  // This service holds no Offboarding Proof keys, so it checks ONLY that the report's files match the fingerprint in
+  // the report's own manifest, and says so (signatureCheckedHere: false). SAMPLE reports are refused. Files are
+  // fingerprinted and discarded.
+  const retireBody = z
+    .object({
+      reason: z.string().trim().min(5).max(500),
+      offboarding: z.object({ manifest: z.string().min(2).max(200_000), pdfBase64: z.string().min(4), csvBase64: z.string().optional() }).strict().optional(),
+    })
+    .strict();
+  const OFFBOARDING = "Offboarding Proof";
+
+  app.post("/agents/:agentId/retire", async (request, reply) => {
+    requireRole(request, "admin");
+    const organization = await workspace(request);
+    const { agentId } = z.object({ agentId: agentIdSchema }).parse(request.params);
+    const input = retireBody.parse(request.body);
+    if (await app.store.getConsoleRecord(organization.id, "retired", agentId)) throw new AppError(409, "ALREADY_RETIRED", "This agent is already retired.");
+    const { source, certificates } = await certificatesFor(organization);
+    if (source !== "authority-atlas") throw new AppError(503, "CERTIFICATES_UNAVAILABLE", "Agent Certificates could not be read, so retirement cannot be proven. Nothing was recorded. Try again in a minute.");
+    const mine = certificates.filter((c) => c.agentId === agentId);
+    if (mine.some((c) => c.status === "active")) throw new AppError(409, "STILL_ACTIVE", "This agent still has an active certificate. Use the kill switch first (it revokes the certificate and records the proof), then retire it.");
+    let offboarding: Record<string, unknown> | null = null;
+    if (input.offboarding) {
+      let manifest: Record<string, unknown>;
+      try { manifest = JSON.parse(input.offboarding.manifest) as Record<string, unknown>; } catch { throw new AppError(400, "MANIFEST_INVALID", "The manifest is not valid JSON."); }
+      if (![manifest.system, manifest.product, manifest.issuer].some((v) => typeof v === "string" && v.includes(OFFBOARDING))) throw new AppError(400, "NOT_OFFBOARDING", "Only signed reports from Offboarding Proof can be attached here.");
+      if (manifest.sample === true || /^SAMPLE$/i.test(String(manifest.recordId ?? ""))) throw new AppError(400, "SAMPLE_REPORT", "That is a SAMPLE report with made-up data. It cannot be used as proof.");
+      const pdf = Buffer.from(input.offboarding.pdfBase64, "base64");
+      const csv = input.offboarding.csvBase64 ? Buffer.from(input.offboarding.csvBase64, "base64") : null;
+      const wantsCsv = Boolean((manifest.files as { csv?: unknown } | undefined)?.csv);
+      if (wantsCsv && !csv) throw new AppError(400, "CSV_MISSING", "This report has a CSV too: attach it as well, exactly as you received it.");
+      const content = wantsCsv && csv ? Buffer.concat([pdf, csv]) : pdf;
+      const contentSha = createHash("sha256").update(content).digest("hex");
+      offboarding = {
+        product: OFFBOARDING,
+        recordType: String(manifest.recordType ?? "").slice(0, 80) || null,
+        recordGeneratedAt: String(manifest.generatedAt ?? "").slice(0, 40) || null,
+        manifestSha256: sha256Hex(input.offboarding.manifest),
+        pdfSha256: createHash("sha256").update(pdf).digest("hex"),
+        csvSha256: csv ? createHash("sha256").update(csv).digest("hex") : null,
+        filesMatch: typeof manifest.contentHash === "string" && contentSha === manifest.contentHash.toLowerCase(),
+        signatureCheckedHere: false,
+      };
+    }
+    const kills = (await app.store.listConsoleRecords(organization.id, "kill")).filter((k) => (k.data as { agentId?: string }).agentId === agentId);
+    const at = new Date().toISOString();
+    const by = actor(request).userId;
+    const certificatesSummary = {
+      active: 0,
+      revoked: mine.filter((c) => c.status === "revoked").map((c) => c.jti),
+      expired: mine.filter((c) => c.status === "expired").map((c) => c.jti),
+    };
+    const receipt = await recordReceipt(app.store, app.pqSigner, {
+      orgId: organization.id, type: "agent-retired", subject: { kind: "agent", id: agentId },
+      facts: { certificates: certificatesSummary, certificateSource: source, killSwitchUses: kills.length, offboarding, reasonSha256: sha256Hex(input.reason), by, at },
+    }, request.log);
+    if (!receipt) throw new AppError(503, "RECEIPT_FAILED", "The signed record could not be written, so nothing was recorded. Try again.");
+    const record = { agentId, reason: input.reason, at, by, certificates: certificatesSummary, killSwitchUses: kills.length, offboarding, receiptSeq: receipt.seq };
+    await app.store.saveConsoleRecord({ organizationId: organization.id, kind: "retired", key: agentId, data: record });
+    await audit(app.store, request, "organization", organization.id, "console.agent_retired", { agentId, offboardingAttached: Boolean(offboarding), filesMatch: offboarding ? Boolean(offboarding.filesMatch) : null });
+    return reply.code(201).send(success(request, {
+      ...record,
+      notes: [
+        "Agent Certificates confirmed no active certificate for this agent when it was retired.",
+        offboarding ? (offboarding.filesMatch ? "The Offboarding Proof report's files match its own manifest. Its signature is checked on Offboarding Proof's /verify page, not here." : "The Offboarding Proof report's files do NOT match its manifest, so it does not count as proof. It is recorded as attached-but-not-matching.") : "No Offboarding Proof report was attached: the agent's non-human accounts outside Agent Certificates are not proven removed by this record.",
+      ],
+    }));
+  });
+
+  app.get("/agents/:agentId/retirement", async (request) => {
+    const organization = await workspace(request);
+    const { agentId } = z.object({ agentId: agentIdSchema }).parse(request.params);
+    const saved = await app.store.getConsoleRecord(organization.id, "retired", agentId);
+    if (!saved) throw notFound("Retirement");
+    return success(request, saved.data);
   });
 
   app.get("/agents/:agentId/capability-snapshots", async (request) => {

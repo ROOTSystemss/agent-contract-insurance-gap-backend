@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config/env.js";
@@ -202,6 +203,55 @@ describe("agent operations on the console", () => {
       expect((await call("POST", "/agents/pay-bot/capability-import", ownerToken, { format: "mcp", content: JSON.stringify({ tools: [] }) })).statusCode).toBe(400);
       expect((await call("POST", "/agents/pay-bot/capability-import", viewerToken, { format: "mcp", content: JSON.stringify({ tools: [{ name: "a" }] }) })).statusCode).toBe(403);
       expect(data<unknown[]>(await call("GET", "/agents/pay-bot/capability-snapshots", otherToken))).toEqual([]);
+    });
+  });
+
+  describe("N-AT-09 retire an agent with proof (Offboarding link)", () => {
+    const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+    const pdf = Buffer.from("%PDF-1.4 offboarding report for svc-old-bot");
+    const csv = Buffer.from("account,system,removed\nsvc-old-bot,github,yes\n");
+    const manifest = (extra: Record<string, unknown> = {}) => JSON.stringify({ system: "Offboarding Proof", recordType: "offboarding-report", generatedAt: "2026-11-17T10:00:00Z", contentHash: sha(Buffer.concat([pdf, csv])), files: { pdf: "r.pdf", csv: "r.csv" }, ...extra });
+    type Retired = { certificates: { active: number; revoked: string[] }; offboarding: { filesMatch: boolean; signatureCheckedHere: boolean } | null; receiptSeq: number; notes: string[] };
+
+    it("refuses while the agent still has an active certificate (use the kill switch first)", async () => {
+      expect((await call("POST", "/certificates", ownerToken, { agentId: "old-bot", agentName: "Old bot", permissions: ["reports:read"] })).statusCode).toBe(201);
+      const res = await call("POST", "/agents/old-bot/retire", ownerToken, { reason: "Replaced by new-bot" });
+      expect(res.statusCode).toBe(409);
+      expect(res.payload).toMatch(/kill switch first/);
+    });
+
+    it("after the kill switch: retired with a matching Offboarding report; signed, /verify passes, changed copy fails", async () => {
+      expect((await call("POST", "/agents/old-bot/kill", ownerToken, { reason: "Retiring the old bot" })).statusCode).toBe(200);
+      expect((await call("POST", "/agents/old-bot/retire", viewerToken, { reason: "viewer try" })).statusCode).toBe(403);
+      expect((await call("POST", "/agents/old-bot/retire", ownerToken, { reason: "Replaced by new-bot", offboarding: { manifest: manifest({ sample: true }), pdfBase64: pdf.toString("base64"), csvBase64: csv.toString("base64") } })).statusCode).toBe(400);
+      expect((await call("POST", "/agents/old-bot/retire", ownerToken, { reason: "Replaced by new-bot", offboarding: { manifest: JSON.stringify({ system: "Someone Else" }), pdfBase64: pdf.toString("base64") } })).statusCode).toBe(400);
+      expect((await call("POST", "/agents/old-bot/retire", ownerToken, { reason: "Replaced by new-bot", offboarding: { manifest: manifest(), pdfBase64: pdf.toString("base64") } })).statusCode).toBe(400);
+      const res = await call("POST", "/agents/old-bot/retire", ownerToken, { reason: "Replaced by new-bot", offboarding: { manifest: manifest(), pdfBase64: pdf.toString("base64"), csvBase64: csv.toString("base64") } });
+      expect(res.statusCode).toBe(201);
+      const body = data<Retired>(res);
+      expect(body.certificates.active).toBe(0);
+      expect(body.certificates.revoked.length).toBe(1);
+      expect(body.offboarding).toMatchObject({ filesMatch: true, signatureCheckedHere: false });
+      const signed = (await receiptsOf("agent-retired")).at(-1)!;
+      expect(JSON.stringify(signed.receipt)).not.toContain("Replaced by new-bot");
+      expect((await publicVerify(signed.receipt)).verdict).toBe("PASS");
+      expect((await publicVerify({ ...signed.receipt, facts: { ...(signed.receipt.facts as object), killSwitchUses: 0 } })).verdict).toBe("FAIL");
+      expect((await call("POST", "/agents/old-bot/retire", ownerToken, { reason: "again please" })).statusCode).toBe(409);
+      expect(data<Retired>(await call("GET", "/agents/old-bot/retirement", ownerToken)).receiptSeq).toBe(body.receiptSeq);
+    });
+
+    it("a report whose files do not match is recorded but never counts as proof", async () => {
+      expect((await call("POST", "/certificates", ownerToken, { agentId: "tmp-bot", agentName: "Tmp", permissions: ["x:y"] })).statusCode).toBe(201);
+      await call("POST", "/agents/tmp-bot/kill", ownerToken, { reason: "Retiring tmp bot" });
+      const res = await call("POST", "/agents/tmp-bot/retire", ownerToken, { reason: "Temporary agent", offboarding: { manifest: manifest(), pdfBase64: Buffer.from("different pdf").toString("base64"), csvBase64: csv.toString("base64") } });
+      expect(res.statusCode).toBe(201);
+      expect(data<Retired>(res).offboarding?.filesMatch).toBe(false);
+      expect(data<Retired>(res).notes.join(" ")).toMatch(/do NOT match/);
+    });
+
+    it("unreadable certificates retire nothing; another workspace sees nothing", async () => {
+      expect((await call("POST", "/agents/old-bot/retire", otherToken, { reason: "not activated" })).statusCode).toBe(503);
+      expect((await call("GET", "/agents/old-bot/retirement", otherToken)).statusCode).toBe(404);
     });
   });
 
