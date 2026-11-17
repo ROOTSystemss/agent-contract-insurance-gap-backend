@@ -140,6 +140,7 @@ export const agentProfileSchema = z
     emergencyStopMechanism: z.string().trim().max(1000).optional(),
     incidentResponseOwner: z.string().trim().max(200).optional(),
     knownLimitations: z.array(z.string().trim().min(1).max(500)).max(100),
+    otherCapabilities: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
     notes: z.string().trim().max(5000).optional(),
   })
   .superRefine((profile, context) => {

@@ -593,6 +593,7 @@ function renderAgent() {
       </section>
       <section class="form-section"><div class="form-section-title"><span class="section-number">03</span><div><h3>Capabilities</h3><p>Select every action the agent can perform, even when approval is required.</p></div></div>
         <div class="toggle-grid">${capabilityFields.map(([name, label]) => `<label class="toggle"${capabilityHints[name] ? ` title="${escapeHtml(capabilityHints[name])}"` : ""}><input type="checkbox" name="${name}" ${agent[name] ? "checked" : ""} /><span>${label}${capabilityHints[name] ? `<small class="field-hint" data-hint="${name}" style="display:block">${escapeHtml(capabilityHints[name])}</small>` : ""}</span></label>`).join("")}</div>
+        <div class="field full"><label for="other-capabilities">Other capabilities (one per line, optional)</label><textarea id="other-capabilities" name="otherCapabilities" placeholder="Books travel for staff">${escapeHtml((agent.otherCapabilities || []).join("\n"))}</textarea><span class="field-hint" data-hint="otherCapabilities">Anything else it can do that is not in the list. These are checked too; anything the checker does not recognise is flagged for a person to review.</span></div>
       </section>
       <section class="form-section"><div class="form-section-title"><span class="section-number">04</span><div><h3>Systems and safeguards</h3><p>Add operational context that a reviewer should understand.</p></div></div>
         <div class="field-grid">
@@ -628,6 +629,7 @@ function wizardDefaults(agent) {
     approvalThresholds: (agent.approvalThresholds || []).join(", "), reversibility: agent.reversibility || "partially_reversible",
     loggingLevel: agent.loggingLevel || "detailed", emergencyStopMechanism: agent.emergencyStopMechanism || "",
     incidentResponseOwner: agent.incidentResponseOwner || "", knownLimitations: (agent.knownLimitations || []).join("\n"), notes: agent.notes || "",
+    otherCapabilities: (agent.otherCapabilities || []).join("\n"),
   };
   capabilityFields.forEach(([name]) => { a[name] = agent[name] === true; });
   return a;

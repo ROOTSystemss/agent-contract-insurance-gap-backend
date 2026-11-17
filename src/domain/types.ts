@@ -263,6 +263,8 @@ export interface AgentProfileInput {
   emergencyStopMechanism?: string;
   incidentResponseOwner?: string;
   knownLimitations: string[];
+  // N-AT-05: capabilities not in the checkbox list, one per line (optional; older profiles have none).
+  otherCapabilities?: string[];
   notes?: string;
 }
 

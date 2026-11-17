@@ -72,6 +72,7 @@
       emergencyStopMechanism: optionalText(v.emergencyStopMechanism),
       incidentResponseOwner: optionalText(v.incidentResponseOwner),
       knownLimitations: lineList(v.knownLimitations),
+      otherCapabilities: lineList(v.otherCapabilities), // N-AT-05: checked by the engine too
       notes: optionalText(v.notes),
     };
     capabilityFields.forEach(([name]) => { payload[name] = v[name] === true || v[name] === "on" || v[name] === "true"; });
@@ -96,7 +97,7 @@
       fields: [["systemsAccessed", "Systems it can use (e.g. CRM, purchasing system)", "text"], ["thirdPartyToolsUsed", "Outside tools it relies on (e.g. Stripe)", "text"]],
       check: () => null },
     { id: "actions", title: "What is it allowed to do?", help: "Tick everything it can do, even if a person approves first.",
-      fields: capabilityFields.map(([name, label]) => [name, label, "checkbox"]),
+      fields: capabilityFields.map(([name, label]) => [name, label, "checkbox"]).concat([["otherCapabilities", "Anything else it can do that is not in the list? One per line (optional). These are checked too; anything the checker does not recognise is flagged for a person to review.", "textarea"]]),
       check: () => null },
     { id: "money", title: "Money limits", help: "Only if it can spend money. Leave empty otherwise.",
       fields: [["perTransactionLimit", "Most it may move in one action", "number"], ["aggregateSpendingLimit", "Most it may move in total (optional)", "number"], ["currency", "Currency (e.g. USD)", "text"]],

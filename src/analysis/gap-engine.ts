@@ -13,8 +13,10 @@ import { evidenceForMatch } from "./clause-detector.js";
 import { CLAUSE_LIBRARY_VERSION, findContradictions } from "./clause-library.js";
 
 // 1.1.0: BM clause library contradiction findings (clause-library.ts). Analyses keep the version they ran with.
-export const ENGINE_VERSION = "gap-engine@1.1.0";
-export const UNIVERSAL_RULE_VERSION = "universal-gap-rules@1.1.0";
+// 1.2.0: "Other capability" free text is checked too (N-AT-05): matched to a known capability rule, or flagged
+// "unclassified capability - needs human review" instead of passing silently.
+export const ENGINE_VERSION = "gap-engine@1.2.0";
+export const UNIVERSAL_RULE_VERSION = "universal-gap-rules@1.2.0";
 
 // Standard-form AI exclusions. Since 1 January 2026 insurers can attach ISO generative-AI exclusion
 // endorsements (form numbers CG 40 47, CG 40 48 and CG 35 08) to commercial general liability
@@ -176,6 +178,48 @@ const capabilityRules: Array<{
   },
 ];
 
+// N-AT-05 (knock-out 2026-11-17): "Other capability" free text. Each line is read with fixed keyword rules (no
+// model, same input -> same result) and mapped to one or more capabilities below. A line that maps to a capability
+// the profile already ticks adds nothing (that rule already runs); a mapped capability is checked exactly like a
+// ticked box; a line that maps to nothing becomes an explicit "needs human review" finding, never a silent pass.
+type OtherRule = {
+  key: string;
+  label: string;
+  keywords: RegExp;
+  covers: keyof AgentProfile | null;
+  clauses: string[];
+  category: FindingCategory;
+  severity: Severity;
+  reviewer: Finding["suggestedProfessionalReviewer"];
+  question: string;
+};
+const ruleFor = (capability: keyof AgentProfile) => capabilityRules.find((r) => r.capability === capability)!;
+const fromCapability = (capability: keyof AgentProfile, keywords: RegExp): OtherRule => {
+  const r = ruleFor(capability);
+  return { key: String(capability), label: r.label, keywords, covers: capability, clauses: r.clauses, category: r.category, severity: r.severity, reviewer: r.reviewer, question: r.question };
+};
+export const OTHER_CAPABILITY_RULES: OtherRule[] = [
+  fromCapability("canEnterContracts", /\b(sign\w*|enter\w*|execut\w*|negotiat\w*|renew\w*)\b[^.]{0,40}\b(contract|agreement|deal|order form|nda)s?\b|\bcontracts?\b/),
+  fromCapability("canAcceptTerms", /\baccept\w*\b[^.]{0,30}\b(terms|conditions|tos|eula|policy|policies)\b|\bclick\w*\b[^.]{0,20}\bagree\b/),
+  fromCapability("canMakeRepresentations", /\b(promis\w*|quot\w*|warrant\w*|represent\w*|commit\w*)\b[^.]{0,40}\b(customers?|clients?|buyers?|prices?|delivery|availability)\b/),
+  fromCapability("canDelegateToSubAgents", /\b(sub-?agents?|other (ai )?agents?|delegat\w*|spawn\w*|orchestrat\w*|hand\w* (off|over) (tasks|work))\b/),
+  fromCapability("canAccessSensitivePersonalData", /\b(health|medical|patient|diagnos\w*|biometric\w*|social security|ssn|passport|national id|religio\w*|ethnic\w*|sexual)\b/),
+  fromCapability("canAccessRegulatedData", /\b(hipaa|phi|pci|card ?numbers?|cardholder|gdpr special|regulated data|financial account numbers?)\b/),
+  fromCapability("canAccessPersonalData", /\b(personal data|personal information|pii|customer (records|data|details|emails?)|employee (records|data)|email addresses|phone numbers|home address\w*)\b/),
+  fromCapability("canAccessConfidentialBusinessData", /\b(confidential|trade secrets?|internal (documents|data|financials)|pricing models?|source code|board (papers|materials))\b/),
+  fromCapability("canCreateIntellectualProperty", /\b(writ\w*|generat\w*|creat\w*|design\w*)\b[^.]{0,30}\b(code|software|content|articles?|images?|designs?|copy|logos?)\b/),
+  fromCapability("canCommunicateExternally", /\b(email\w*|messag\w*|text\w*|call\w*|chat\w*|post\w*|repl\w*)\b[^.]{0,30}\b(customers?|clients?|vendors?|suppliers?|public|partners?|regulators?)\b/),
+  { key: "MONEY", label: "moving money or making payments", keywords: /\b(pay\w*|refund\w*|transfer\w* (funds|money)|wire\w*|payouts?|purchas\w*|buy\w*|spend\w*|invoice\w*|charg\w*|credits? (to|accounts?))\b/, covers: null, clauses: ["approval_requirements", "authority_to_act", "financial_loss", "crime_fidelity"], category: "transaction_limit_mismatch", severity: "high", reviewer: "legal_counsel", question: "Ask counsel and the insurer whether payments or refunds made by software are within the documented authority, approval limits and crime / financial-loss cover." },
+  { key: "SYSTEMS", label: "changing production systems, code or data", keywords: /\b(deploy\w*|production|servers?|infrastructure|cloud (settings|accounts?)|firewalls?|databases?|delet\w*|drop\w*|wip\w*|configur\w*|admin(istrator)? (rights|access))\b/, covers: null, clauses: ["security_obligations", "technology_services", "cyber_events"], category: "security_gap", severity: "high", reviewer: "security_or_privacy", question: "Ask security and the insurer whether changes to production systems or data by an autonomous agent are covered by the documented security obligations and cyber cover." },
+  { key: "PEOPLE", label: "decisions about people (hiring, firing, eligibility)", keywords: /\b(hir\w*|fir\w*|terminat\w* (employees?|workers?|staff|contractors?)|candidates?|applicants?|screen\w* (people|cvs?|resumes?)|eligib\w*|credit decisions?|loan decisions?|tenant screening)\b/, covers: null, clauses: ["human_oversight", "approval_requirements", "employment_practices"], category: "approval_control_mismatch", severity: "high", reviewer: "legal_counsel", question: "Ask counsel whether decisions about people made or prepared by an agent need documented human review, and whether employment-practices cover contemplates them." },
+  { key: "PUBLISHING", label: "publishing content in the company's name", keywords: /\b(publish\w*|social media|press releases?|advertis\w*|blog posts?|marketing (posts|emails|campaigns))\b/, covers: null, clauses: ["generated_content", "media_liability", "intellectual_property_ownership"], category: "intellectual_property_gap", severity: "moderate", reviewer: "legal_counsel", question: "Ask counsel and the insurer whether content an agent publishes in the company's name is covered by the content, IP and media-liability terms." },
+];
+
+export function classifyOtherCapability(text: string): OtherRule[] {
+  const normalised = ` ${String(text).toLowerCase().replace(/[^a-z0-9\s-]/g, " ").replace(/\s+/g, " ").trim()} `;
+  return OTHER_CAPABILITY_RULES.filter((rule) => rule.keywords.test(normalised));
+}
+
 function stableId(analysisId: string, key: string): string {
   return createHash("sha256").update(`${analysisId}:${key}`).digest("hex").slice(0, 32);
 }
@@ -298,6 +342,69 @@ export function analyzeGaps(input: {
       }),
     );
   }
+
+  // N-AT-05: "Other capability" lines. Same test as a ticked box; unmapped lines are flagged for human review.
+  (input.agent.otherCapabilities ?? []).forEach((rawText, index) => {
+    const text = String(rawText).trim().slice(0, 300);
+    if (!text) return;
+    const where = `otherCapabilities[${index}]`;
+    const matched = classifyOtherCapability(text);
+    if (matched.length === 0) {
+      findings.push(
+        buildFinding(input.organizationId, input.projectId, input.analysisId, {
+          key: `other-unclassified:${index}`,
+          title: "Unclassified capability - needs human review",
+          category: "professional_review_required",
+          severity: "moderate",
+          confidence: 1,
+          capability: where,
+          document: null,
+          clauseCategory: null,
+          documentFact: "The supplied documents were not compared with this capability.",
+          agentFact: `The customer described an additional capability: "${text}".`,
+          inference:
+            "The engine does not recognise this capability, so it could not check whether the contracts or insurance documents address it. It is not treated as covered.",
+          rule: "GLOBAL.OTHER_CAPABILITY.UNCLASSIFIED",
+          evidence: [],
+          uncertainty: "Only a person can judge whether the documents address this capability.",
+          limitations: ["Free-text capabilities are matched with fixed keyword rules; wording the rules do not know is flagged, not guessed."],
+          questions: [`Have a qualified reviewer check whether the contracts and insurance documents address: "${text}".`],
+          reviewer: "legal_counsel",
+        }),
+      );
+      return;
+    }
+    for (const rule of matched) {
+      if (rule.covers && input.agent[rule.covers] === true) continue; // the ticked box already runs this rule
+      if (allDetections.some((detection) => rule.clauses.includes(detection.category))) continue;
+      findings.push(
+        buildFinding(input.organizationId, input.projectId, input.analysisId, {
+          key: `other:${index}:${rule.key}`,
+          title: `No responsive language located for ${rule.label} (described under "Other capability")`,
+          category: rule.category,
+          severity: rule.severity,
+          confidence: input.documents.length ? 0.7 : 0.4,
+          capability: where,
+          document: contractDocuments[0] ?? null,
+          clauseCategory: rule.clauses[0] ?? null,
+          documentFact: `No responsive ${rule.clauses.join(" or ")} language was located in the extracted documents.`,
+          agentFact: `The customer described an additional capability: "${text}" (read as ${rule.label}).`,
+          inference:
+            "The described capability may be broader than the authority or controls clearly described in the supplied documents.",
+          rule: `GLOBAL.OTHER_CAPABILITY.${rule.key.toUpperCase()}`,
+          evidence: [],
+          uncertainty:
+            "The free text was matched with fixed keyword rules; relevant language may also exist in documents not supplied or in wording the patterns do not recognise.",
+          limitations: [
+            "No quotation is provided because no responsive language was detected.",
+            "This is not a conclusion about authority, coverage or enforceability.",
+          ],
+          questions: [rule.question],
+          reviewer: rule.reviewer,
+        }),
+      );
+    }
+  });
 
   if (
     input.agent.autonomyLevel >= 3 &&
