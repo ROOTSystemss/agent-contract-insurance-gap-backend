@@ -6,11 +6,13 @@ import { canonicalJson, hashPack } from "./assurance-pack.js";
 // service publishes). Used by the insurance broker pack (AD-059) and the monthly agent statement (BM-43).
 export const BROKER_PACK_SCHEMA = "rootsystems.agent-broker-pack.v1";
 export const MONTHLY_STATEMENT_SCHEMA = "rootsystems.agent-monthly-statement.v1";
+export const ACCOUNT_EXPORT_SCHEMA = "rootsystems.account-export-manifest.v1";
 
 // What /verify calls each kind of signed document (the schema is inside the hashed, signed content).
 export const DOCUMENT_KINDS: Record<string, string> = {
   [BROKER_PACK_SCHEMA]: "broker-pack",
   [MONTHLY_STATEMENT_SCHEMA]: "monthly-statement",
+  [ACCOUNT_EXPORT_SCHEMA]: "account-export",
 };
 
 export function signDocument(doc: Record<string, unknown>, signer: PqSigner | null) {

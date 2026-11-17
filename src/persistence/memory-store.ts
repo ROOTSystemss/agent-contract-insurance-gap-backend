@@ -602,6 +602,27 @@ export class MemoryStore implements Store {
     return [...this.consoleCertificates.values()].filter((c) => c.organizationId === organizationId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => c.jti);
   }
 
+  async exportOrganizationData(organizationId: string): Promise<Record<string, unknown[]>> {
+    const of = <V extends { organizationId: string }>(map: Map<string, V>) => [...map.values()].filter((v) => v.organizationId === organizationId).map((v) => structuredClone(v));
+    const org = this.organizations.get(organizationId);
+    return {
+      Organization: org ? [structuredClone(org)] : [], OrganizationMember: of(this.memberships), Project: of(this.projects), AgentProfile: of(this.agents),
+      Document: of(this.documents), Analysis: of(this.analyses), Finding: of(this.findings), AuditEvent: of(this.auditEvents), ServiceLink: of(this.serviceLinks),
+      ConsoleCertificate: of(this.consoleCertificates), ConsoleSubscription: of(this.consoleSubscriptions), ConsoleSigner: of(this.consoleSigners),
+      EvidenceReceipt: of(this.receipts), ConsoleRecord: of(this.consoleRecords),
+    };
+  }
+
+  async exportUserData(userId: string): Promise<Record<string, unknown[]>> {
+    const user = this.users.get(userId);
+    const tf = this.twoFactor.get(userId);
+    return {
+      User: user ? [structuredClone(user)] : [], UserTwoFactor: tf ? [structuredClone(tf)] : [],
+      AuthToken: [...this.authTokens.values()].filter((t) => t.userId === userId).map((t) => structuredClone(t)),
+      OrganizationMember: [...this.memberships.values()].filter((m) => m.userId === userId).map((m) => structuredClone(m)),
+    };
+  }
+
   async deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }> {
     const storageKeys = [...this.documents.values()].filter((d) => d.organizationId === organizationId).map((d) => d.storageKey);
     const drop = <V extends { organizationId: string }>(map: Map<string, V>) => { for (const [k, v] of map) if (v.organizationId === organizationId) map.delete(k); };

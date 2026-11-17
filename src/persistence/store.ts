@@ -174,6 +174,10 @@ export interface Store {
   // segments, analyses, findings, audit events, console links/certificates/subscription/signers, receipts).
   // Returns the storage keys of its uploaded documents so the caller deletes the files too.
   deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }>;
+  // AD-077 self-serve export (knock-out 2026-11-17): every row this workspace / user holds, decrypted, keyed by
+  // model name. Secrets are removed by the caller (security/account-export.ts), not here.
+  exportOrganizationData(organizationId: string): Promise<Record<string, unknown[]>>;
+  exportUserData(userId: string): Promise<Record<string, unknown[]>>;
   // Takes one person out of a workspace: their membership and their console signer enrolment.
   removeMembership(organizationId: string, userId: string): Promise<void>;
   // Deletes the user row when nothing else refers to it. When a surviving workspace still refers to it (documents

@@ -29,7 +29,7 @@
   function page(title, intro, inner) {
     app.innerHTML = `<main class="auth-page"><section class="auth-story"><div><div class="brand"><img class="brand-mark-img" src="/rs-logo.svg" alt="" width="29" height="32"><span>RootSystems</span></div></div><div class="story-copy"><span class="eyebrow">AI Agent Trust</span><h1>Your <em>account</em></h1><p>Email confirmation and password changes for the Agent Governance console and the coverage workspace (one sign-in for both).</p></div></section><section class="auth-panel"><div class="auth-card"><span class="eyebrow">Account</span><h2>${esc(title)}</h2><p class="intro">${intro}</p>${inner}</div></section></main>`;
   }
-  const links = `<p class="small" style="margin-top:18px"><a href="/console">Open the console</a> · <a href="/">Open the coverage workspace</a> · <a href="/account#change">Change password</a> · <a href="/account#2fa">Two-factor sign-in</a> · <a href="/account#delete" id="delete-account-link">Delete my account</a></p>`;
+  const links = `<p class="small" style="margin-top:18px"><a href="/console">Open the console</a> · <a href="/">Open the coverage workspace</a> · <a href="/account#export">Download my data</a> · <a href="/account#change">Change password</a> · <a href="/account#2fa">Two-factor sign-in</a> · <a href="/account#delete" id="delete-account-link">Delete my account</a></p>`;
   const passwordFields = (prefix) =>
     `<div class="field full"><label for="${prefix}-new">New password</label><input id="${prefix}-new" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" placeholder="At least 12 characters" /></div>
      <div class="field full"><label for="${prefix}-again">Repeat the new password</label><input id="${prefix}-again" name="again" type="password" autocomplete="new-password" required minlength="12" maxlength="128" /></div>`;
@@ -158,6 +158,28 @@
     });
   }
 
+  // Download my data (AD-077, knock-out 2026-11-17): one ZIP for the current workspace and your account.
+  function exportPage() {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    page("Download your data", "Workspace owners and admins can download everything this workspace holds, plus their own account.",
+      `<div id="export-info" class="small"><p>One ZIP: your account, and one readable JSON file per kind of record in this workspace (projects, agent profiles, documents and the uploaded files still kept, analyses, findings, audit history, certificates list, approvals, receipts, governance records). Passwords, two-factor secrets, service credentials and agent certificate tokens are left out on purpose (the ZIP lists them). Its file list is signed: check export-manifest.json on the public /verify page.</p></div>
+       <button id="export-btn" class="button button-primary button-block" type="button">Download my data (ZIP)</button><p class="form-message" role="alert"></p>${links}`);
+    const btn = document.querySelector("#export-btn"), msg = document.querySelector(".form-message");
+    btn.addEventListener("click", async () => {
+      msg.textContent = "";
+      if (!token) { msg.textContent = "Sign in to the console first, then come back to this page."; return; }
+      btn.disabled = true;
+      try {
+        const r = await fetch(`${API}/auth/export`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" });
+        if (!r.ok) { const p = await r.json().catch(() => ({})); throw new Error((p.error && p.error.message) || `Something went wrong (${r.status}).`); }
+        const url = URL.createObjectURL(await r.blob());
+        const a = document.createElement("a"); a.href = url; a.download = "ai-agent-trust-export.zip"; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        msg.textContent = "Downloaded.";
+      } catch (error) { msg.textContent = error.message; }
+      btn.disabled = false;
+    });
+  }
   window.addEventListener("hashchange", () => window.location.reload());
   const hash = window.location.hash.replace(/^#/, "");
   const [kind, token] = hash.split("=");
@@ -169,5 +191,6 @@
   } else if (kind === "change") change();
   else if (kind === "2fa") twoFactor();
   else if (kind === "delete") deleteAccountPage();
+  else if (kind === "export") exportPage();
   else forgot();
 })();

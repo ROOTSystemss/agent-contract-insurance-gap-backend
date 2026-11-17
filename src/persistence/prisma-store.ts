@@ -970,6 +970,57 @@ export class PrismaStore implements Store {
     return rows.map((r) => r.jti);
   }
 
+  // AD-077: every row of the workspace, sealed values opened (text, lists and sealed JSON alike).
+  private openDeep(value: unknown): unknown {
+    if (typeof value === "string" && this.vault.isSealed(value)) {
+      const opened = this.vault.open(value);
+      if (/^[[{]/.test(opened)) { try { return JSON.parse(opened); } catch { /* plain text that starts with a bracket */ } }
+      return opened;
+    }
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === "bigint") return value.toString();
+    if (Buffer.isBuffer(value)) return value.toString("base64");
+    if (Array.isArray(value)) return value.map((v) => this.openDeep(v));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.openDeep(v)]));
+    return value;
+  }
+
+  async exportOrganizationData(organizationId: string): Promise<Record<string, unknown[]>> {
+    const c = this.client;
+    const where = { organizationId };
+    const analyses = await c.analysis.findMany({ where });
+    const rows: Record<string, unknown[]> = {
+      Organization: await c.organization.findMany({ where: { id: organizationId } }),
+      OrganizationMember: await c.organizationMember.findMany({ where }),
+      Project: await c.project.findMany({ where }),
+      AgentProfile: await c.agentProfile.findMany({ where }),
+      Document: await c.document.findMany({ where }),
+      DocumentSegment: await c.documentSegment.findMany({ where }),
+      Analysis: analyses,
+      AnalysisDocument: await c.analysisDocument.findMany({ where: { analysisId: { in: analyses.map((a) => a.id) } } }),
+      Finding: await c.finding.findMany({ where }),
+      AuditEvent: await c.auditEvent.findMany({ where }),
+      ServiceLink: await c.serviceLink.findMany({ where }),
+      ConsoleCertificate: await c.consoleCertificate.findMany({ where }),
+      ConsoleSubscription: await c.consoleSubscription.findMany({ where }),
+      ConsoleSigner: await c.consoleSigner.findMany({ where }),
+      EvidenceReceipt: await c.evidenceReceipt.findMany({ where }),
+      ConsoleRecord: await c.consoleRecord.findMany({ where }),
+    };
+    return Object.fromEntries(Object.entries(rows).map(([k, list]) => [k, list.map((r) => this.openDeep(r))]));
+  }
+
+  async exportUserData(userId: string): Promise<Record<string, unknown[]>> {
+    const c = this.client;
+    const rows: Record<string, unknown[]> = {
+      User: await c.user.findMany({ where: { id: userId } }),
+      UserTwoFactor: await c.userTwoFactor.findMany({ where: { userId } }),
+      AuthToken: await c.authToken.findMany({ where: { userId } }),
+      OrganizationMember: await c.organizationMember.findMany({ where: { userId } }),
+    };
+    return Object.fromEntries(Object.entries(rows).map(([k, list]) => [k, list.map((r) => this.openDeep(r))]));
+  }
+
   async deleteOrganization(organizationId: string): Promise<{ storageKeys: string[] }> {
     const documents = await this.client.document.findMany({ where: { organizationId }, select: { storageKey: true } });
     // Same order as reset(): rows that RESTRICT a delete (analysis -> agent profile, analysis document -> document,

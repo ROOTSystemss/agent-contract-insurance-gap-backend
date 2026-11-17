@@ -5,8 +5,9 @@ import { z } from "zod";
 import type { Role, User } from "../domain/types.js";
 import { checkCode, hashRecovery, matchStep, newRecoveryCodes, newSecret, otpauthUri } from "../security/two-factor.js";
 import { AppError, unauthorized } from "../shared/errors.js";
-import { actor, audit, success } from "./helpers.js";
+import { actor, audit, requireRole, success } from "./helpers.js";
 import { deleteAccount } from "../security/account-deletion.js";
+import { buildAccountExport, zipStored } from "../security/account-export.js";
 import { loginSchema, registerSchema } from "./schemas.js";
 
 function safeUser(user: User) {
@@ -221,6 +222,27 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   // S-14 delete on request: the current password (and the two-factor code when it is on) deletes the account.
   // Workspaces owned alone are deleted with all their data; see security/account-deletion.ts.
+  // AD-077 (knock-out 2026-11-17): self-serve data export of the current workspace + the signed-in account.
+  // Workspace owners and admins only; confirmed email; 5 per hour per person. Returns a ZIP (security/account-export.ts).
+  const exportTimes = new Map<string, number[]>();
+  app.post("/export", { preHandler: app.authenticate }, async (request, reply) => {
+    const who = actor(request);
+    requireRole(request, "admin");
+    await app.accountSecurity.requireVerified(who.userId);
+    const now = Date.now();
+    const recent = (exportTimes.get(who.userId) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= 5) {
+      void reply.header("Retry-After", "3600");
+      throw new AppError(429, "TOO_MANY_EXPORTS", "You exported your data 5 times in the last hour. Try again later.");
+    }
+    const out = await buildAccountExport(app, who.userId, who.organizationId);
+    recent.push(now);
+    exportTimes.set(who.userId, recent);
+    await audit(app.store, request, "organization", who.organizationId, "account.data_exported", { files: out.files.length, receiptSeq: out.receiptSeq });
+    const name = `ai-agent-trust-export-${new Date().toISOString().slice(0, 10)}.zip`;
+    return reply.header("content-type", "application/zip").header("content-disposition", `attachment; filename="${name}"`).header("cache-control", "no-store").send(zipStored(out.files));
+  });
+
   app.post("/delete-account", { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request, reply) => {
     const input = deleteBody.parse(request.body);
     const user = await app.store.getUser(actor(request).userId);
