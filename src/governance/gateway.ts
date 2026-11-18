@@ -109,6 +109,8 @@ export class GovernanceGateway {
   private readonly accountDomain: string;
   private readonly linking = new Map<string, Promise<ServiceLink>>();
   private readonly atlasTokens = new Map<string, { token: string; until: number }>();
+  // QA 2026-11-18 F21: workspaces whose Atlas issuer Trust Proof has confirmed as linked (this process).
+  private readonly issuerLinked = new Set<string>();
 
   constructor(
     private readonly store: Store,
@@ -214,9 +216,49 @@ export class GovernanceGateway {
     // One link per workspace even if two requests arrive together.
     const pending = this.linking.get(organization.id);
     if (pending) return pending;
-    const creating = this.createLink(organization).finally(() => this.linking.delete(organization.id));
+    const creating = this.createLink(organization)
+      .then(async (link) => {
+        await this.ensureIssuerLinked(organization);
+        return link;
+      })
+      .finally(() => this.linking.delete(organization.id));
     this.linking.set(organization.id, creating);
     return creating;
+  }
+
+  // QA 2026-11-18 F21: Trust Proof accepts a certificate only from the Atlas issuer the workspace has
+  // linked. The console links its own Atlas identity by handing Trust Proof that identity's token (Trust
+  // Proof confirms it with Atlas). Best effort: if it fails, console pages still work, Trust Proof keeps
+  // refusing this workspace's certificates (fail closed), and the next certificate list or issue retries.
+  async ensureIssuerLinked(organization: Organization): Promise<boolean> {
+    if (this.issuerLinked.has(organization.id)) return true;
+    const { trustProofUrl } = this.requireConfigured();
+    try {
+      const identityToken = await this.atlasToken(organization);
+      const result = await this.call(trustProofUrl, "POST", "/api/v1/atlas-issuers", {
+        body: { identityToken },
+        token: await this.trustProofKey(organization),
+      });
+      if (result.status === 200 || result.status === 201) {
+        this.issuerLinked.add(organization.id);
+        return true;
+      }
+    } catch {
+      // fall through: not linked yet
+    }
+    return false;
+  }
+
+  // Links the issuer of every already-activated workspace (run once after start, for links made before
+  // QA 2026-11-18 F21). Sequential and best effort; returns how many are linked.
+  async linkAllIssuers(organizations: Organization[]): Promise<{ linked: number; failed: number }> {
+    let linked = 0;
+    let failed = 0;
+    for (const organization of organizations) {
+      if (await this.ensureIssuerLinked(organization)) linked++;
+      else failed++;
+    }
+    return { linked, failed };
   }
 
   private async createLink(organization: Organization): Promise<ServiceLink> {
@@ -280,6 +322,7 @@ export class GovernanceGateway {
     const { atlasUrl } = this.requireConfigured();
     const result = await this.call(atlasUrl, "GET", "/agents/certificates", { token: await this.atlasToken(organization) });
     if (result.status !== 200) this.fail(result, "Listing certificates");
+    if (this.options.trustProofUrl) await this.ensureIssuerLinked(organization);
     return ((result.body as { certificates?: AtlasCertificate[] }).certificates ?? []);
   }
 
@@ -287,6 +330,7 @@ export class GovernanceGateway {
     const { atlasUrl } = this.requireConfigured();
     const result = await this.call(atlasUrl, "POST", "/agents/certificates", { body: input, token: await this.atlasToken(organization) });
     if (result.status !== 201) this.fail(result, "Issuing the certificate");
+    await this.ensureIssuerLinked(organization);
     const issued = result.body as { certificate: string; jti: string; agentId: string; expiresAt: string; pqSignature?: unknown };
     await this.store.addConsoleCertificate({
       jti: issued.jti,

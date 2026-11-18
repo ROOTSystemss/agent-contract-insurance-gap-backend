@@ -773,6 +773,11 @@ export class PrismaStore implements Store {
     return row ? this.serviceLink(row) : null;
   }
 
+  async listServiceLinkOrganizationIds(): Promise<string[]> {
+    const rows = await this.client.serviceLink.findMany({ select: { organizationId: true } });
+    return rows.map((row) => row.organizationId);
+  }
+
   async saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink> {
     const { organizationId, ...fields } = link;
     const sealed = { ...fields, atlasEmail: this.vault.seal(fields.atlasEmail), trustProofEmail: this.vault.seal(fields.trustProofEmail) };

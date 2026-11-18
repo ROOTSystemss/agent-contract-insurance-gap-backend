@@ -137,6 +137,8 @@ export interface Store {
     pagination: PaginationInput,
   ): Promise<Paginated<AuditEvent>>;
   getServiceLink(organizationId: string): Promise<ServiceLink | null>;
+  // QA 2026-11-18 F21: workspaces that have a service link (for the one-time issuer-link backfill).
+  listServiceLinkOrganizationIds(): Promise<string[]>;
   saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink>;
   addConsoleCertificate(record: Omit<ConsoleCertificate, "createdAt">): Promise<ConsoleCertificate>;
   getConsoleCertificate(organizationId: string, jti: string): Promise<ConsoleCertificate | null>;

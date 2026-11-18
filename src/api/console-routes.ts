@@ -73,8 +73,10 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     const organization = await workspace(request);
     const already = Boolean(await app.store.getServiceLink(organization.id));
     await app.governance.ensureLink(organization);
+    // QA 2026-11-18 F21: Trust Proof accepts this workspace's certificates only once its Atlas issuer is linked.
+    const issuerLinked = await app.governance.ensureIssuerLinked(organization);
     if (!already) await audit(app.store, request, "organization", organization.id, "console.linked");
-    return success(request, { linked: true });
+    return success(request, { linked: true, issuerLinked });
   });
 
   app.get("/overview", async (request) => {

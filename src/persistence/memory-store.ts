@@ -461,6 +461,10 @@ export class MemoryStore implements Store {
     return this.serviceLinks.get(organizationId) ?? null;
   }
 
+  async listServiceLinkOrganizationIds(): Promise<string[]> {
+    return [...this.serviceLinks.keys()];
+  }
+
   async saveServiceLink(link: Omit<ServiceLink, "createdAt" | "updatedAt">): Promise<ServiceLink> {
     const existing = this.serviceLinks.get(link.organizationId);
     const timestamp = now();
