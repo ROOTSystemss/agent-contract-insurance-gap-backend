@@ -175,7 +175,9 @@ export function verifyAssurancePack(
 ): { valid: boolean; computedHash: string; signature: { status: "not_supplied" | "valid" | "invalid" | "not_this_service" | "signed_after_key_retired"; keyId?: string } } {
   const computedHash = hashPack(pack);
   const hashValid = computedHash === contentHash.toLowerCase();
-  if (!signature) return { valid: hashValid, computedHash, signature: { status: "not_supplied" } };
+  // QA fix run 2026-11-18 (session 2, F39): the content hash alone proves nothing (anyone can recompute it for an
+  // edited pack), so a pack with no signature is never valid: who issued it cannot be confirmed.
+  if (!signature) return { valid: false, computedHash, signature: { status: "not_supplied" } };
   const bytes = Buffer.from(canonicalJson(pack), "utf8");
   const published: PublishedKey[] = keys ?? (signer ? [{ keyId: signer.keyId, publicKey: signer.publicKey, status: "active", validUntil: null }] : []);
   // Packs from before signatures carried their public key were always signed by the key active at the time.

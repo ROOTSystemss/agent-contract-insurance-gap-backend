@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config/env.js";
 import { recordReceipt } from "../src/evidence/receipts.js";
+import { hashPack } from "../src/reports/assurance-pack.js";
 import { MemoryStore } from "../src/persistence/memory-store.js";
 import { OutboxMailer } from "../src/security/mailer.js";
 import { governanceFakes } from "./governance-fakes.js";
@@ -182,6 +183,18 @@ describe("QA 2026-11-18 console fixes", () => {
     });
     it("a receipt on its own is still checked as a receipt", async () => {
       expect((await verify({ receipt })).verdict).toBe("PASS");
+    });
+    // Session 2 re-test (F39): with no signature the content hash alone was accepted, and anyone can recompute it.
+    it("F39: an EDITED pack with a recomputed hash and no signature (no receipt) is FAIL", async () => {
+      const pack = { ...file.pack, organization: "Forged Holdings Ltd" };
+      delete (pack as { sample?: unknown }).sample;
+      const r = await verify({ pack, contentHash: hashPack(pack) });
+      expect(r.verdict).toBe("FAIL");
+      expect(r.reason).toMatch(/no signature/);
+    });
+    it("F39: the genuine pack without its signature is FAIL too (issuer cannot be confirmed), even with its receipt", async () => {
+      expect((await verify({ pack: file.pack, contentHash: file.contentHash })).verdict).toBe("FAIL");
+      expect((await verify({ pack: file.pack, contentHash: file.contentHash, receipt })).verdict).toBe("FAIL");
     });
   });
 

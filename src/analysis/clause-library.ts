@@ -81,6 +81,24 @@ export function withoutNegatedProhibitions(sentence: string): string {
   return NEGATED_PROHIBITION.reduce((s, re) => s.replace(re, " "), sentence);
 }
 
+// QA 2026-11-18 F26 (re-test): a negated approval requirement ("need no approval", "no approval is required",
+// "does not require approval", "approval is not needed") removes the requirement, so it is removed before the
+// approval patterns are tested. Any other approval wording left in the sentence still counts.
+const NEGATED_APPROVAL = [
+  /\b(?:needs?|requires?|required)\s+no\s+(?:\w+\s+){0,2}(?:approval|consent|authori[sz]ation)\b/gi,
+  /\bno\s+(?:\w+\s+){0,2}(?:approval|consent|authori[sz]ation)\s+(?:is\s+|shall\s+be\s+|will\s+be\s+)?(?:needed|required|necessary)\b/gi,
+  /\b(?:does|do|shall|will|need)\s+not\s+(?:need|require)\s+(?:the\s+|any\s+)?(?:\w+\s+){0,2}(?:approval|consent|authori[sz]ation)\b/gi,
+  /\b(?:approval|consent|authori[sz]ation)\s+(?:is|are|shall\s+be|will\s+be)\s+not\s+(?:needed|required|necessary)\b/gi,
+  /\bwithout\s+(?:the\s+)?need\s+(?:for|of)\s+(?:\w+\s+){0,2}(?:approval|consent|authori[sz]ation)\b/gi,
+];
+export function withoutNegatedApprovals(sentence: string): string {
+  return NEGATED_APPROVAL.reduce((s, re) => s.replace(re, " "), sentence);
+}
+const testedText = (kind: string, sentence: string): string =>
+  kind === "prohibition" ? withoutNegatedProhibitions(sentence)
+    : kind === "approval_required" || kind === "written_approval" ? withoutNegatedApprovals(sentence)
+    : sentence;
+
 /** Every restriction sentence in a document, one entry per (sentence, kind). */
 export function findRestrictions(document: DocumentRecord): RestrictionClause[] {
   const out: RestrictionClause[] = [];
@@ -92,7 +110,7 @@ export function findRestrictions(document: DocumentRecord): RestrictionClause[] 
       const subjects = SUBJECTS.filter(([, re]) => re.test(sentence)).map(([s]) => s);
       const amounts = [...sentence.matchAll(AMOUNT)].map((a) => Number(a[1]!.replaceAll(",", ""))).filter(Number.isFinite);
       for (const { kind, label, pattern } of RESTRICTION_PATTERNS) {
-        if (!pattern.test(kind === "prohibition" ? withoutNegatedProhibitions(sentence) : sentence)) continue;
+        if (!pattern.test(testedText(kind, sentence))) continue;
         if (kind === "automation_exclusion" && !document.documentType.startsWith("insurance_")) continue;
         out.push({
           kind, label, documentId: document.id, documentType: document.documentType, sentence, subjects, amounts,

@@ -65,6 +65,7 @@ export const publicVerifyRoutes: FastifyPluginAsync = async (app) => {
       const valid = result.valid && receiptProblem === null;
       const reason = valid ? null
         : result.computedHash !== parsed.contentHash.toLowerCase() ? "The pack was changed after it was built (its fingerprint does not match)."
+        : result.signature.status === "not_supplied" ? "The pack carries no signature, so who issued it cannot be confirmed. Use the complete file downloaded from AI Agent Trust."
         : result.signature.status === "not_this_service" ? "The pack is signed, but not by AI Agent Trust's published key."
         : result.signature.status === "signed_after_key_retired" ? "The pack is signed with a retired AI Agent Trust key, after that key was retired."
         : !result.valid ? "The signature does not match the pack."

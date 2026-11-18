@@ -29,12 +29,13 @@ describe("canonicalJson / hashPack", () => {
     expect(canonicalJson({ a: 1, b: undefined })).toBe('{"a":1}');
   });
 
-  it("verifies an untouched pack and rejects an altered one", () => {
+  it("an unsigned pack is never valid, even with a matching hash (QA fix 2026-11-18 F39); a changed one fails the hash", () => {
     const pack = { severity: "high", count: 3 };
     const hash = hashPack(pack);
-    expect(verifyAssurancePack(pack, hash).valid).toBe(true);
-    expect(verifyAssurancePack(pack, hash.toUpperCase()).valid).toBe(true);
-    expect(verifyAssurancePack({ severity: "low", count: 3 }, hash).valid).toBe(false);
+    // Anyone can recompute the hash of an edited pack, so the hash alone proves nothing.
+    expect(verifyAssurancePack(pack, hash)).toMatchObject({ valid: false, computedHash: hash, signature: { status: "not_supplied" } });
+    expect(verifyAssurancePack(pack, hash.toUpperCase()).valid).toBe(false);
+    expect(verifyAssurancePack({ severity: "low", count: 3 }, hash).computedHash).not.toBe(hash);
   });
 });
 
@@ -149,13 +150,20 @@ describe("assurance pack API", () => {
   });
 
   it("verifies a pack it built and rejects a tampered one", async () => {
-    const built = body<{ data: { pack: Record<string, unknown>; contentHash: string } }>(
+    const built = body<{ data: { pack: Record<string, unknown>; contentHash: string; signature?: unknown } }>(
       await api("POST", `/api/v1/analyses/${analysisId}/assurance-pack`, token, {}),
     ).data;
-    const ok = await api("POST", "/api/v1/analyses/assurance-pack/verify", token, { pack: built.pack, contentHash: built.contentHash });
-    expect(body<{ data: { valid: boolean } }>(ok).data.valid).toBe(true);
+    // F39: without its signature the pack is not valid (the issuer cannot be confirmed).
+    const unsigned = await api("POST", "/api/v1/analyses/assurance-pack/verify", token, { pack: built.pack, contentHash: built.contentHash });
+    expect(body<{ data: { valid: boolean; signature: { status: string } } }>(unsigned).data).toMatchObject({ valid: false, signature: { status: "not_supplied" } });
+    // This app has no signing key (signature status "not_configured"); the signed path is in pq-assurance-pack.test.ts.
+    const signed = (built.signature as { status?: string } | undefined)?.status === "signed";
+    if (signed) {
+      const ok = await api("POST", "/api/v1/analyses/assurance-pack/verify", token, { pack: built.pack, contentHash: built.contentHash, signature: built.signature });
+      expect(body<{ data: { valid: boolean } }>(ok).data.valid).toBe(true);
+    }
     const tampered = { ...built.pack, project: "A different project" };
-    const bad = await api("POST", "/api/v1/analyses/assurance-pack/verify", token, { pack: tampered, contentHash: built.contentHash });
+    const bad = await api("POST", "/api/v1/analyses/assurance-pack/verify", token, { pack: tampered, contentHash: built.contentHash, ...(signed ? { signature: built.signature } : {}) });
     expect(body<{ data: { valid: boolean } }>(bad).data.valid).toBe(false);
     const malformed = await api("POST", "/api/v1/analyses/assurance-pack/verify", token, { pack: built.pack, contentHash: "nothex" });
     expect(malformed.statusCode).toBe(400);

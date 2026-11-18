@@ -194,6 +194,20 @@ describe("QA 2026-11-18 F26: vendor approval, personal data, negated prohibition
     expect(findRestrictions(doc(mixed, "commercial_contract")).map((r) => r.kind)).toContain("prohibition");
     expect(findRestrictions(doc("The Supplier is prohibited from offering discounts to resellers.", "commercial_contract")).map((r) => r.kind)).toContain("prohibition");
   });
+  // Re-test 2026-11-18 (session 2): QA's exact side letter still raised 2 approval contradictions, from
+  // "... under this agreement and need no approval." A negated approval requirement is no requirement.
+  it("QA's exact side letter raises nothing", () => {
+    const text = "SIDE LETTER 2 (QA)\n\n1. The automated agent is not prohibited from entering into contracts on behalf of the Customer.\n2. Refunds are not forbidden under this agreement and need no approval.\n";
+    expect(run(qaAgent(), [doc(text, "commercial_contract")]).filter((x) => /^Contradiction/.test(x.title))).toHaveLength(0);
+  });
+  it("negated approval wording is not an approval requirement; a real one in the same sentence still counts", () => {
+    for (const text of ["Contracts under this agreement need no approval.", "No prior approval is required for contracts under this agreement.", "Entering contracts does not require approval.", "Approval is not required for contracts.", "The agent may sign contracts without the need for approval."]) {
+      expect(findRestrictions(doc(text, "commercial_contract")).map((r) => r.kind), text).not.toContain("approval_required");
+    }
+    const mixed = "Refunds need no approval, but contracts require prior approval.";
+    expect(findRestrictions(doc(mixed, "commercial_contract")).map((r) => r.kind)).toContain("approval_required");
+    expect(findRestrictions(doc("Contracts require management approval.", "commercial_contract")).map((r) => r.kind)).toContain("approval_required");
+  });
 });
 
 describe("findContradictions is pure", () => {
