@@ -111,6 +111,8 @@ export interface User {
   emailVerifiedAt: string | null;
   // Last password change; access tokens issued before it are refused.
   passwordChangedAt: string | null;
+  // QA 2026-11-18 F33: a teammate added with a one-time password must choose their own before anything else.
+  mustChangePassword?: boolean;
   createdAt: string;
   updatedAt: string;
 }

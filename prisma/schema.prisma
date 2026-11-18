@@ -60,6 +60,8 @@ model User {
   emailVerifiedAt   DateTime?
   // Access tokens issued before this moment are refused.
   passwordChangedAt DateTime?
+  // QA 2026-11-18 F33: set for a teammate added with a one-time password; cleared when they choose their own.
+  mustChangePassword Boolean @default(false)
   memberships  OrganizationMember[]
   uploadedDocs Document[]           @relation("DocumentUploader")
   auditEvents  AuditEvent[]         @relation("AuditActor")

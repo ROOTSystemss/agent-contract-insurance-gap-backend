@@ -81,7 +81,7 @@ export class PrismaStore implements Store {
     return json(this.vault.sealJson(value));
   }
 
-  private user(row: { id: string; email: string; name: string; passwordHash: string; emailVerifiedAt: Date | null; passwordChangedAt: Date | null; createdAt: Date; updatedAt: Date }): User {
+  private user(row: { id: string; email: string; name: string; passwordHash: string; emailVerifiedAt: Date | null; passwordChangedAt: Date | null; mustChangePassword?: boolean; createdAt: Date; updatedAt: Date }): User {
     return {
       id: row.id,
       email: this.vault.open(row.email),
@@ -89,6 +89,7 @@ export class PrismaStore implements Store {
       passwordHash: row.passwordHash,
       emailVerifiedAt: row.emailVerifiedAt ? iso(row.emailVerifiedAt) : null,
       passwordChangedAt: row.passwordChangedAt ? iso(row.passwordChangedAt) : null,
+      mustChangePassword: row.mustChangePassword === true,
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt),
     };
@@ -301,7 +302,7 @@ export class PrismaStore implements Store {
   }
 
   async setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void> {
-    await this.client.user.updateMany({ where: { id: userId }, data: { passwordHash, passwordChangedAt: new Date(changedAt) } });
+    await this.client.user.updateMany({ where: { id: userId }, data: { passwordHash, passwordChangedAt: new Date(changedAt), mustChangePassword: false } });
   }
 
   async saveAuthToken(record: { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string }): Promise<void> {
@@ -837,10 +838,10 @@ export class PrismaStore implements Store {
     }
   }
 
-  async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
+  async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role; mustChangePassword?: boolean }): Promise<OrganizationMember> {
     try {
       const membership = await this.client.$transaction(async (database) => {
-        const user = await database.user.create({ data: { ...this.userEmailData(input.email), name: this.vault.seal(input.name), passwordHash: input.passwordHash } });
+        const user = await database.user.create({ data: { ...this.userEmailData(input.email), name: this.vault.seal(input.name), passwordHash: input.passwordHash, mustChangePassword: input.mustChangePassword === true } });
         return database.organizationMember.create({ data: { organizationId, userId: user.id, role: input.role } });
       });
       return { ...membership, createdAt: iso(membership.createdAt) };

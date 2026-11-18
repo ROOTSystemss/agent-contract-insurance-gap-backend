@@ -32,7 +32,8 @@ const DUMMY_HASH = bcrypt.hashSync("no-such-account-timing-decoy", 12);
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   const secureCookies = process.env.NODE_ENV === "production";
-  const verification = (user: User) => ({ emailVerified: app.accountSecurity.isVerified(user), verificationRequired: app.accountSecurity.required });
+  // mustChangePassword (QA 2026-11-18 F33): a teammate signed in with their one-time password must choose their own first.
+  const verification = (user: User) => ({ emailVerified: app.accountSecurity.isVerified(user), verificationRequired: app.accountSecurity.required, ...(user.mustChangePassword ? { mustChangePassword: true } : {}) });
 
   app.post(
     "/register",

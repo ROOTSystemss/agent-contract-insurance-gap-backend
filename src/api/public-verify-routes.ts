@@ -23,7 +23,9 @@ export const publicVerifyRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/api/v1/public/verify", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    if (body.receipt) {
+    // QA 2026-11-18 F24: a downloaded Assurance Pack file carries both the pack and its receipt. The pack is
+    // what the holder relies on, so when both are sent the pack is checked (below), never the receipt alone.
+    if (body.receipt && !body.pack) {
       const { receipt } = receiptBody.parse(body);
       const result = verifyOne(receipt, keys(), verifyWithPublicKey);
       if (!result.valid) return { data: { kind: "receipt", verdict: "FAIL", reason: result.reason } };
@@ -47,18 +49,31 @@ export const publicVerifyRoutes: FastifyPluginAsync = async (app) => {
       return { data: { kind: "certificate", verdict: "PASS", agentId: c.agentId, agentName: c.agentName, organization: c.organization, organizationVerified: c.organizationVerified === true, permissions: c.permissions, limits: c.limits, issuedAt: c.issuedAt, expiresAt: c.expiresAt } };
     }
     if (body.pack) {
-      const parsed = packBody.parse(body);
+      const parsed = packBody.parse({ pack: body.pack, contentHash: body.contentHash, signature: body.signature });
       const result = verifyAssurancePack(parsed.pack, parsed.contentHash, parsed.signature, app.pqSigner, keys());
-      const reason = result.valid ? null
+      // F24: a receipt sent with the pack must verify too, and must be the receipt for THIS pack.
+      let receiptProblem: string | null = null;
+      if (body.receipt) {
+        const r = receiptBody.safeParse({ receipt: body.receipt });
+        const checked = r.success ? verifyOne(r.data.receipt, keys(), verifyWithPublicKey) : null;
+        if (!checked || !checked.valid) receiptProblem = "The receipt that came with the pack does not verify" + (checked && !checked.valid && checked.reason ? ": " + checked.reason : ".");
+        else {
+          const receiptHash = (checked.facts as { contentHash?: unknown } | undefined)?.contentHash;
+          if (typeof receiptHash !== "string" || receiptHash !== result.computedHash) receiptProblem = "The receipt that came with the pack is for a different pack.";
+        }
+      }
+      const valid = result.valid && receiptProblem === null;
+      const reason = valid ? null
         : result.computedHash !== parsed.contentHash.toLowerCase() ? "The pack was changed after it was built (its fingerprint does not match)."
         : result.signature.status === "not_this_service" ? "The pack is signed, but not by AI Agent Trust's published key."
         : result.signature.status === "signed_after_key_retired" ? "The pack is signed with a retired AI Agent Trust key, after that key was retired."
-        : "The signature does not match the pack.";
+        : !result.valid ? "The signature does not match the pack."
+        : receiptProblem;
       // A SAMPLE pack says so inside its hashed, signed content; only a valid pack can be reported as a sample.
-      const sample = result.valid && (parsed.pack as { sample?: unknown }).sample === true;
+      const sample = valid && (parsed.pack as { sample?: unknown }).sample === true;
       // Other signed documents in the same format name their kind by the schema inside the signed content.
       const kind = DOCUMENT_KINDS[String((parsed.pack as { schema?: unknown }).schema ?? "")] ?? "assurance-pack";
-      return { data: { kind, verdict: result.valid ? "PASS" : "FAIL", reason, signature: result.signature.status, computedHash: result.computedHash, ...(sample ? { sample: true, sampleNotice: String((parsed.pack as { sampleNotice?: unknown }).sampleNotice ?? "SAMPLE") } : {}) } };
+      return { data: { kind, verdict: valid ? "PASS" : "FAIL", reason, signature: result.signature.status, computedHash: result.computedHash, ...(body.receipt ? { receipt: receiptProblem === null ? "PASS" : "FAIL" } : {}), ...(sample ? { sample: true, sampleNotice: String((parsed.pack as { sampleNotice?: unknown }).sampleNotice ?? "SAMPLE") } : {}) } };
     }
     return { data: { kind: null, verdict: "FAIL", reason: "Choose a receipt or an Agent Assurance Pack (.json)." } };
   });

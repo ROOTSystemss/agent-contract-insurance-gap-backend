@@ -246,9 +246,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       },
     },
   });
-  await app.register(swaggerUi, { routePrefix: "/docs" });
+  // QA 2026-11-18 F34: the route list is not published on a production server unless asked for.
+  const apiDocsServed = config.NODE_ENV !== "production" || config.API_DOCS_PUBLIC === "1";
+  if (apiDocsServed) await app.register(swaggerUi, { routePrefix: "/docs" });
 
+  // QA 2026-11-18 F33: what a teammate who still has their one-time password may do (choose their own).
+  const PASSWORD_CHANGE_OPEN = new Set(["/api/v1/auth/change-password", "/api/v1/auth/me", "/api/v1/auth/resend-verification"]);
   app.decorate("authenticate", async (request) => {
+    let mustChangePassword = false;
     try {
       const payload = await request.jwtVerify<{
         sub: string;
@@ -262,6 +267,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const user = await store.getUser(payload.sub);
       if (!user) throw unauthorized();
       if (user.passwordChangedAt && (payload.iat ?? 0) < Math.floor(Date.parse(user.passwordChangedAt) / 1000)) throw unauthorized();
+      mustChangePassword = user.mustChangePassword === true;
       request.actor = {
         userId: payload.sub,
         organizationId: payload.organizationId,
@@ -269,6 +275,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       };
     } catch {
       throw unauthorized();
+    }
+    if (mustChangePassword && !PASSWORD_CHANGE_OPEN.has(request.routeOptions.url ?? "")) {
+      throw new AppError(403, "PASSWORD_CHANGE_REQUIRED", "Choose your own password first: the one-time password from your admin works only for that (POST /api/v1/auth/change-password).");
     }
   });
 
@@ -458,7 +467,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return reply.redirect("/console");
     }
   });
-  app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
+  if (apiDocsServed) app.get("/api/v1/openapi.json", async (_request, reply) => reply.send(app.swagger()));
 
   await app.register(publicVerifyRoutes); // GET /verify and POST /api/v1/public/verify: no account needed
   await app.register(uiRoutes);

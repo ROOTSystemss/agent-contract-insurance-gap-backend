@@ -206,7 +206,9 @@ describe("console governance records", () => {
       const added = data<{ temporaryPassword: string }>(teamRes);
       const loginRes = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "records-member@example.com", password: added.temporaryPassword } });
       const login = JSON.parse(loginRes.payload) as { data: { accessToken: string; user: { id: string } } };
-      memberToken = login.data.accessToken;
+      // QA 2026-11-18 F33: a teammate chooses their own password before anything else.
+      const changed = await app.inject({ method: "POST", url: "/api/v1/auth/change-password", headers: { authorization: `Bearer ${login.data.accessToken}` }, payload: { currentPassword: added.temporaryPassword, newPassword: "Policy Member Own Passphrase 9!" } });
+      memberToken = (JSON.parse(changed.payload) as { data: { accessToken: string } }).data.accessToken;
       memberId = (JSON.parse((await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { authorization: `Bearer ${memberToken}` } })).payload) as { data: { user: { id: string } } }).data.user.id;
     });
 

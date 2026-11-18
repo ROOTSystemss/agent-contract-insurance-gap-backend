@@ -110,7 +110,9 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/certificates", async (request, reply) => {
-    requireRole(request, "analyst");
+    // QA 2026-11-18 F27: granting an agent authority is at least as sensitive as removing it, so issuing
+    // needs the same admin role as revoking.
+    requireRole(request, "admin");
     const organization = await workspace(request);
     const input = issueBody.parse(request.body);
     // Plan limit: active certificates at once (revoked and expired ones do not count).
@@ -209,8 +211,9 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
     return success(request, await teamWithSigners(organization.id));
   });
 
-  // Adds a teammate to this workspace. There is no email sending yet, so the one-time password is
-  // returned once to the admin to pass on privately; it is stored only as a bcrypt hash.
+  // Adds a teammate to this workspace. The one-time password is returned once to the admin to pass on
+  // privately (it is never emailed) and stored only as a bcrypt hash. QA 2026-11-18 F33: the teammate is
+  // emailed a link to confirm their address, and must choose their own password at first sign-in.
   app.post("/team", async (request, reply) => {
     requireRole(request, "admin");
     const organization = await workspace(request);
@@ -219,14 +222,17 @@ export const consoleRoutes: FastifyPluginAsync = async (app) => {
       .parse(request.body);
     const temporaryPassword = randomBytes(12).toString("base64url");
     try {
-      await app.store.addMember(organization.id, { email: input.email, name: input.name, role: input.role, passwordHash: await bcrypt.hash(temporaryPassword, 12) });
+      await app.store.addMember(organization.id, { email: input.email, name: input.name, role: input.role, passwordHash: await bcrypt.hash(temporaryPassword, 12), mustChangePassword: true });
     } catch (error) {
       if (error instanceof Error && error.message === "EMAIL_EXISTS") throw new AppError(409, "EMAIL_EXISTS", "That email already has a RootSystems account.");
       throw error;
     }
-    await audit(app.store, request, "organization", organization.id, "console.member_added", { role: input.role });
+    // F33: the confirmation email (the existing verification path; it never carries the password).
+    const added = await app.store.findUserByEmail(input.email.toLowerCase());
+    const mail = added && app.accountSecurity.required ? await app.accountSecurity.sendVerification(added) : null;
+    await audit(app.store, request, "organization", organization.id, "console.member_added", { role: input.role, confirmationEmail: mail ? (mail.sent ? "sent" : mail.reason) : "not_required" });
     reply.header("Cache-Control", "no-store");
-    return reply.code(201).send(success(request, { email: input.email.toLowerCase(), temporaryPassword }));
+    return reply.code(201).send(success(request, { email: input.email.toLowerCase(), temporaryPassword, confirmationEmailSent: Boolean(mail && mail.sent), mustChangePassword: true }));
   });
 
   app.get("/approvals", async (request) => {

@@ -157,6 +157,45 @@ describe("no contradiction where the profile already complies", () => {
   });
 });
 
+// QA 2026-11-18 F26: the two QA sentences, and the "not prohibited" false alarm.
+describe("QA 2026-11-18 F26: vendor approval, personal data, negated prohibitions", () => {
+  const qaAgent = () => invoiceBot({
+    canApproveOrRejectVendors: true, canAccessPersonalData: true, canEnterContracts: true,
+    canIssueRefundsOrCredits: false, canMakeRepresentations: false,
+  });
+  it("flags 'Only authorized personnel may approve or reject vendors.'", () => {
+    const f = run(qaAgent(), [doc("Only authorized personnel may approve or reject vendors.", "commercial_contract")]);
+    const hit = f.find((x) => x.affectedAgentCapability === "canApproveOrRejectVendors" && x.reviewRule === "BM.CONTRADICTION.AUTHORIZED_PERSONNEL_ONLY");
+    expect(hit).toBeDefined();
+    expect(hit!.agentProfileFact).toContain("approves or rejects vendors");
+  });
+  it("flags 'The agent must not access personal data of employees.'", () => {
+    const f = run(qaAgent(), [doc("The agent must not access personal data of employees.", "commercial_contract")]);
+    const hit = f.find((x) => x.affectedAgentCapability === "canAccessPersonalData" && x.reviewRule === "BM.CONTRADICTION.PROHIBITION");
+    expect(hit).toBeDefined();
+    expect(hit!.category).toBe("privacy_gap");
+  });
+  it("no finding when the agent does not have the capability", () => {
+    const f = run(qaAgent(), [doc("Only authorized personnel may approve or reject vendors. The agent must not access personal data of employees.", "commercial_contract")]);
+    expect(f.length).toBeGreaterThanOrEqual(2);
+    const none = run(invoiceBot({ canApproveOrRejectVendors: false, canAccessPersonalData: false, canAccessSensitivePersonalData: false, canIssueRefundsOrCredits: false, canMakeRepresentations: false }), [doc("Only authorized personnel may approve or reject vendors. The agent must not access personal data of employees.", "commercial_contract")]);
+    expect(none.filter((x) => ["canApproveOrRejectVendors", "canAccessPersonalData"].includes(x.affectedAgentCapability ?? ""))).toHaveLength(0);
+  });
+  it("'is not prohibited from entering into contracts' raises nothing", () => {
+    const text = "The automated agent is not prohibited from entering into contracts.";
+    expect(findRestrictions(doc(text, "commercial_contract")).map((r) => r.kind)).not.toContain("prohibition");
+    expect(run(qaAgent(), [doc(text, "commercial_contract")])).toHaveLength(0);
+  });
+  it("other negations permit too; a real prohibition in the same sentence still counts", () => {
+    for (const text of ["The agent shall not be restricted from entering into contracts.", "Nothing in this agreement prohibits the agent from entering into contracts.", "Entering into contracts is not forbidden for the agent."]) {
+      expect(findRestrictions(doc(text, "commercial_contract")).map((r) => r.kind)).not.toContain("prohibition");
+    }
+    const mixed = "The agent is not prohibited from quoting, but it may not enter into contracts.";
+    expect(findRestrictions(doc(mixed, "commercial_contract")).map((r) => r.kind)).toContain("prohibition");
+    expect(findRestrictions(doc("The Supplier is prohibited from offering discounts to resellers.", "commercial_contract")).map((r) => r.kind)).toContain("prohibition");
+  });
+});
+
 describe("findContradictions is pure", () => {
   it("returns drafts without touching the inputs", () => {
     const d = doc(LEMON_CONTRACT, "master_services_agreement");

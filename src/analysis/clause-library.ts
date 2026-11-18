@@ -7,7 +7,8 @@ import { evidenceForMatch } from "./clause-detector.js";
 // the same subject as a declared capability; the finding quotes that sentence and the capability. It is
 // an attention signal for professional review, not a legal interpretation.
 
-export const CLAUSE_LIBRARY_VERSION = "bm-clause-library@1.0.0";
+// 1.1.0 (QA 2026-11-18 F26): vendor-approval and personal-data rules; negated prohibitions do not count.
+export const CLAUSE_LIBRARY_VERSION = "bm-clause-library@1.1.0";
 
 export type RestrictionKind =
   | "approval_required"
@@ -41,8 +42,10 @@ export const RESTRICTION_PATTERNS: Array<{ kind: RestrictionKind; label: string;
 ];
 
 // Subjects a restriction sentence can be about. A sentence can have several.
-type Subject = "refunds_credits" | "representations" | "pricing" | "personal_data" | "contracts" | "spending" | "delegation" | "automation";
+type Subject = "refunds_credits" | "representations" | "pricing" | "personal_data" | "contracts" | "spending" | "delegation" | "automation" | "vendors";
 const SUBJECTS: Array<[Subject, RegExp]> = [
+  // QA 2026-11-18 F26: vendor approval (paired with canApproveOrRejectVendors below).
+  ["vendors", /\b(?:vendors?|suppliers?|service\s+providers?|third-party\s+providers?)\b/i],
   ["refunds_credits", /\b(?:refunds?|credits?|credit\s+notes?|chargebacks?|rebates?|write-?offs?)\b/i],
   ["representations", /\b(?:statements?|representations?|represent|promises?|commitments?|assurances?|warrant(?:y|ies)?|quotes?)\b/i],
   ["pricing", /\b(?:pric(?:e|es|ing)|discounts?|rates?|fees?)\b/i],
@@ -67,6 +70,17 @@ export interface RestrictionClause {
 
 const AMOUNT = /(?:USD|US\$|\$)\s*(\d[\d,]*(?:\.\d{1,2})?)/gi;
 
+// QA 2026-11-18 F26: a negated prohibition ("is not prohibited from", "shall not be restricted from",
+// "nothing ... prohibits") permits the action, so it is removed before the prohibition pattern is tested.
+// Any other prohibition wording left in the sentence still counts.
+const NEGATED_PROHIBITION = [
+  /\b(?:(?:may|shall|must|will|can)\s+not\s+be|(?:is|are|was|were|be)\s+not|not\s+be|not)\s+(?:prohibited|forbidden|barred|restricted|prevented)\b(?:\s+from)?/gi,
+  /\bnothing\b[^.;]{0,160}?\b(?:prohibits?|forbids?|restricts?|prevents?|bars?)\b/gi,
+];
+export function withoutNegatedProhibitions(sentence: string): string {
+  return NEGATED_PROHIBITION.reduce((s, re) => s.replace(re, " "), sentence);
+}
+
 /** Every restriction sentence in a document, one entry per (sentence, kind). */
 export function findRestrictions(document: DocumentRecord): RestrictionClause[] {
   const out: RestrictionClause[] = [];
@@ -78,7 +92,7 @@ export function findRestrictions(document: DocumentRecord): RestrictionClause[] 
       const subjects = SUBJECTS.filter(([, re]) => re.test(sentence)).map(([s]) => s);
       const amounts = [...sentence.matchAll(AMOUNT)].map((a) => Number(a[1]!.replaceAll(",", ""))).filter(Number.isFinite);
       for (const { kind, label, pattern } of RESTRICTION_PATTERNS) {
-        if (!pattern.test(sentence)) continue;
+        if (!pattern.test(kind === "prohibition" ? withoutNegatedProhibitions(sentence) : sentence)) continue;
         if (kind === "automation_exclusion" && !document.documentType.startsWith("insurance_")) continue;
         out.push({
           kind, label, documentId: document.id, documentType: document.documentType, sentence, subjects, amounts,
@@ -124,6 +138,10 @@ const CAPABILITY_SUBJECTS: Array<{ capability: keyof AgentProfile; label: (a: Ag
   { capability: "canAcceptTerms", label: () => "accepts terms", subjects: ["contracts"], category: "authority_mismatch", reviewer: "legal_counsel" },
   { capability: "canSpendMoney", label: (a) => `spends money${a.perTransactionLimit !== undefined ? ` (up to ${a.currency ?? ""} ${a.perTransactionLimit} per transaction)`.replace("  ", " ") : ""}`, subjects: ["spending"], category: "approval_control_mismatch", reviewer: "legal_counsel" },
   { capability: "canDelegateToSubAgents", label: () => "delegates work to sub-agents", subjects: ["delegation"], category: "sub_agent_gap", reviewer: "legal_counsel" },
+  // QA 2026-11-18 F26: vendor approval and personal-data access were missing from this table.
+  { capability: "canApproveOrRejectVendors", label: () => "approves or rejects vendors", subjects: ["vendors"], category: "authority_mismatch", reviewer: "legal_counsel" },
+  { capability: "canAccessPersonalData", label: () => "accesses personal data", subjects: ["personal_data"], category: "privacy_gap", reviewer: "security_or_privacy" },
+  { capability: "canAccessSensitivePersonalData", label: () => "accesses sensitive personal data", subjects: ["personal_data"], category: "privacy_gap", reviewer: "security_or_privacy" },
 ];
 
 /** Contradictions between declared capabilities and restriction clauses. Deterministic. */

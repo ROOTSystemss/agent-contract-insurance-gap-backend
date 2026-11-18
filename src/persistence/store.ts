@@ -164,7 +164,7 @@ export interface Store {
   saveConsoleRecord(record: { organizationId: string; kind: string; key: string; data: Record<string, unknown> }): Promise<ConsoleRecord>;
   deleteConsoleRecord(organizationId: string, kind: string, key: string): Promise<boolean>;
   // Adds a new user to an existing workspace (team invite). Throws EMAIL_EXISTS if the email is taken.
-  addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember>;
+  addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role; mustChangePassword?: boolean }): Promise<OrganizationMember>;
   reset(): Promise<void>;
 
   // ---- Account deletion (safeguard S-14, delete on request) ----

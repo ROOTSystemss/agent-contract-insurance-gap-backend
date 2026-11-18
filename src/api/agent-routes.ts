@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { notFound } from "../shared/errors.js";
 import { actor, audit, requireRole, success } from "./helpers.js";
-import { agentProfileSchema } from "./schemas.js";
+import { agentProfilePatchSchema, agentProfileSchema, spendingProblems } from "./schemas.js";
 import {
   escalationPatch,
   reconcile,
@@ -97,7 +97,15 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.patch("/:id", async (request) => {
     requireRole(request, "analyst");
     const { id } = agentParams.parse(request.params);
-    const input = agentProfileSchema.partial().parse(request.body);
+    // QA 2026-11-18 F25: look the profile up first, so another workspace gets "not found", never a 500.
+    const existing = await app.store.getAgent(actor(request).organizationId, id);
+    if (!existing) throw notFound("Agent profile");
+    const input = agentProfilePatchSchema.parse(request.body ?? {});
+    // The spending rule is checked on the profile as it would be after the change.
+    const problems = spendingProblems({ ...existing, ...input });
+    if (problems.length) {
+      throw new AppError(400, "VALIDATION_ERROR", problems[0]!.message, problems.map((p) => ({ path: p.path.join("."), message: p.message })));
+    }
     const agent = await app.store.updateAgent(actor(request).organizationId, id, input);
     if (!agent) throw notFound("Agent profile");
     await audit(app.store, request, "agent_profile", agent.id, "agent_profile.update", {

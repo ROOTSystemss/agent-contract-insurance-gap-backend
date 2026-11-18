@@ -68,6 +68,9 @@ const envSchema = z
     // Base URL of Trust Proof, which checks and records agent actions. With AUTHORITY_ATLAS_URL it
     // enables the Agent Governance console (/console); without both, console calls answer 503.
     TRUST_PROOF_URL: z.string().url().optional(),
+    // QA 2026-11-18 F34: the API documentation (/docs, /docs/json, /api/v1/openapi.json) is served in
+    // production only when this is "1". Always on outside production.
+    API_DOCS_PUBLIC: z.enum(["0", "1"]).default("0"),
     // Shared with Authority Atlas and Trust Proof (same value on all three): lets the console create one
     // identity/organization per workspace from this single server without hitting per-IP signup limits.
     CONSOLE_SERVICE_TOKEN: z.string().min(32).optional(),

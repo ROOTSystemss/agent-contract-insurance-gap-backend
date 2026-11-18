@@ -114,7 +114,9 @@ describe("agent operations on the console", () => {
     type Req = { requestId: string; state: string; status: string; decidedByName?: string; receiptSeq?: number | null };
     beforeAll(async () => {
       const added = data<{ temporaryPassword: string }>(await call("POST", "/team", ownerToken, { name: "Second Admin", email: "ops-second-admin@example.com", role: "admin" }));
-      secondAdminToken = (JSON.parse((await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "ops-second-admin@example.com", password: added.temporaryPassword } })).payload) as { data: { accessToken: string } }).data.accessToken;
+      const firstToken = (JSON.parse((await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "ops-second-admin@example.com", password: added.temporaryPassword } })).payload) as { data: { accessToken: string } }).data.accessToken;
+      // QA 2026-11-18 F33: a teammate chooses their own password before anything else.
+      secondAdminToken = (JSON.parse((await app.inject({ method: "POST", url: "/api/v1/auth/change-password", headers: { authorization: `Bearer ${firstToken}` }, payload: { currentPassword: added.temporaryPassword, newPassword: "Second Admin Own Passphrase 9!" } })).payload) as { data: { accessToken: string } }).data.accessToken;
       requestId = data<Check>(await call("POST", "/gates/check", ownerToken, { agentId: "pay-bot", action: "invoices:pay", resource: "INV-77", amountUsd: 400 })).requestId!;
     });
 

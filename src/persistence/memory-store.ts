@@ -142,7 +142,7 @@ export class MemoryStore implements Store {
 
   async setPassword(userId: string, passwordHash: string, changedAt: string): Promise<void> {
     const found = this.users.get(userId);
-    if (found) this.users.set(userId, { ...found, passwordHash, passwordChangedAt: changedAt, updatedAt: now() });
+    if (found) this.users.set(userId, { ...found, passwordHash, passwordChangedAt: changedAt, mustChangePassword: false, updatedAt: now() });
   }
 
   async saveAuthToken(record: { userId: string; purpose: AuthTokenPurpose; tokenHash: string; expiresAt: string }): Promise<void> {
@@ -500,10 +500,10 @@ export class MemoryStore implements Store {
     return true;
   }
 
-  async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role }): Promise<OrganizationMember> {
+  async addMember(organizationId: string, input: { email: string; name: string; passwordHash: string; role: Role; mustChangePassword?: boolean }): Promise<OrganizationMember> {
     if (await this.findUserByEmail(input.email)) throw new Error("EMAIL_EXISTS");
     const timestamp = now();
-    const user: User = { id: randomUUID(), email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash, emailVerifiedAt: null, passwordChangedAt: null, createdAt: timestamp, updatedAt: timestamp };
+    const user: User = { id: randomUUID(), email: input.email.toLowerCase(), name: input.name, passwordHash: input.passwordHash, emailVerifiedAt: null, passwordChangedAt: null, mustChangePassword: input.mustChangePassword === true, createdAt: timestamp, updatedAt: timestamp };
     this.users.set(user.id, user);
     const membership: OrganizationMember = { id: randomUUID(), organizationId, userId: user.id, role: input.role, createdAt: timestamp };
     this.memberships.set(membership.id, membership);

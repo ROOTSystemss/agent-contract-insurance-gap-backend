@@ -81,7 +81,10 @@ export const projectCreateSchema = z.object({
 export const projectUpdateSchema = projectCreateSchema.partial();
 
 const optionalMoney = z.number().nonnegative().max(1_000_000_000).optional();
-export const agentProfileSchema = z
+// QA 2026-11-18 F25: the object and its spending rule are kept apart, because zod refuses .partial() on an
+// object that carries a refinement (PATCH answered 500 on every call). PATCH validates the fields it got
+// with agentProfilePatchSchema, then the merged profile with spendingProblems().
+export const agentProfileObjectSchema = z
   .object({
     name: z.string().trim().min(2).max(160),
     description: z.string().trim().max(4000).optional(),
@@ -142,26 +145,30 @@ export const agentProfileSchema = z
     knownLimitations: z.array(z.string().trim().min(1).max(500)).max(100),
     otherCapabilities: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
     notes: z.string().trim().max(5000).optional(),
-  })
-  .superRefine((profile, context) => {
-    if (profile.canSpendMoney && (!profile.currency || profile.perTransactionLimit === undefined)) {
-      context.addIssue({
-        code: "custom",
-        path: ["perTransactionLimit"],
-        message: "Spending agents require a currency and per-transaction limit.",
-      });
-    }
-    if (
-      !profile.canSpendMoney &&
-      (profile.perTransactionLimit !== undefined || profile.aggregateSpendingLimit !== undefined)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["canSpendMoney"],
-        message: "Spending limits require canSpendMoney=true.",
-      });
-    }
   });
+
+export function spendingProblems(profile: {
+  canSpendMoney?: boolean;
+  currency?: string | null;
+  perTransactionLimit?: number | null;
+  aggregateSpendingLimit?: number | null;
+}): Array<{ path: string[]; message: string }> {
+  const problems: Array<{ path: string[]; message: string }> = [];
+  const has = (v: unknown) => v !== undefined && v !== null;
+  if (profile.canSpendMoney && (!profile.currency || !has(profile.perTransactionLimit))) {
+    problems.push({ path: ["perTransactionLimit"], message: "Spending agents require a currency and per-transaction limit." });
+  }
+  if (!profile.canSpendMoney && (has(profile.perTransactionLimit) || has(profile.aggregateSpendingLimit))) {
+    problems.push({ path: ["canSpendMoney"], message: "Spending limits require canSpendMoney=true." });
+  }
+  return problems;
+}
+
+export const agentProfileSchema = agentProfileObjectSchema.superRefine((profile, context) => {
+  for (const problem of spendingProblems(profile)) context.addIssue({ code: "custom", ...problem });
+});
+
+export const agentProfilePatchSchema = agentProfileObjectSchema.partial();
 
 export const analysisCreateSchema = z.object({
   agentProfileId: z.string().uuid(),
